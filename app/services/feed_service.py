@@ -4,6 +4,7 @@ from app.repositories.postagem_repository import PostagemRepository
 from app.repositories.curtida_repository import CurtidaRepository
 from app.repositories.comentario_repository import ComentarioRepository
 from app.repositories.seguidor_repository import SeguidorRepository
+from app.repositories.obra_salva_repository import ObraSalvaRepository
 from app.schemas.postagem_schema import FeedItemResposta, FeedUsuarioResposta, CategoriaResposta
 
 
@@ -20,20 +21,6 @@ class FeedService:
     def obter_feed(db: Session, usuario_id: int) -> List[FeedItemResposta]:
         """
         Monta o feed cronológico para o usuário autenticado.
-
-        Para cada postagem ativa, calcula:
-        - Quantidade de likes
-        - Quantidade de comentários
-        - Quantidade de seguidores do autor
-        - Se o usuário autenticado curtiu a postagem
-        - Se o usuário autenticado segue o autor
-
-        Args:
-            db: Sessão ativa do SQLAlchemy.
-            usuario_id: ID do usuário autenticado (do JWT).
-
-        Returns:
-            Lista de FeedItemResposta ordenada por dataPostagem DESC.
         """
         # 1. Buscar todas as postagens ativas, mais recentes primeiro
         postagens = PostagemRepository.listar_todas(db)
@@ -49,6 +36,7 @@ class FeedService:
             # Flags de interação do usuário autenticado
             curtido = CurtidaRepository.buscar(db, usuario_id, postagem.id) is not None
             seguindo = SeguidorRepository.buscar(db, usuario_id, postagem.idUsuario) is not None
+            salvo = ObraSalvaRepository.buscar(db, usuario_id, postagem.id) is not None
 
             # Montar o schema do usuário autor
             usuario_resp = None
@@ -81,6 +69,7 @@ class FeedService:
                 seguidores=total_seguidores,
                 curtido_por_mim=curtido,
                 seguindo_usuario=seguindo,
+                salvo_por_mim=salvo,
             )
             feed_items.append(item)
 

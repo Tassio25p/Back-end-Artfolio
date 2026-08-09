@@ -77,5 +77,37 @@ class SafeRedisClient:
             logger.error(f"Erro ao deletar chave no Redis ({chave}): {e}")
             return False
 
+    def delete_pattern(self, pattern: str) -> bool:
+        """
+        Remove todas as chaves que correspondem a um padrão wildcard (ex: 'artfolio:obras:*').
+        Retorna False se o Redis estiver indisponível.
+        """
+        if not self.client:
+            return False
+        try:
+            keys = self.client.keys(pattern)
+            if keys:
+                self.client.delete(*keys)
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao deletar padrão no Redis ({pattern}): {e}")
+            return False
+
+    def incr(self, chave: str, expira_segundos: int = 60) -> int:
+        """
+        Incrementa o valor de uma chave atômica e ajusta o tempo de expiração na primeira criação.
+        Retorna o valor atualizado ou 0 se o Redis estiver indisponível.
+        """
+        if not self.client:
+            return 0
+        try:
+            valor = self.client.incr(chave)
+            if valor == 1:
+                self.client.expire(chave, expira_segundos)
+            return valor
+        except Exception as e:
+            logger.error(f"Erro ao incrementar chave no Redis ({chave}): {e}")
+            return 0
+
 # Instanciação global para uso em toda a aplicação
 redis_client = SafeRedisClient()

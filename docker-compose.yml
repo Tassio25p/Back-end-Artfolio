@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  redis-artfolio:
+    image: redis:7
+    container_name: redis-artfolio
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6380:6379"
+    volumes:
+      - artfolio_redis_data:/data
+
+volumes:
+  artfolio_redis_data:

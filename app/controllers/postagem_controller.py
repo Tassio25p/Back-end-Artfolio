@@ -127,6 +127,12 @@ def listar_comentarios(id: int, db: Session = Depends(get_db)):
     """
     return ComentarioService.listar_comentarios(db, id)
 
+from app.schemas.obra_salva_schema import ObraSalvaResposta, SalvarStatusResposta
+from app.schemas.denuncia_schema import DenunciaCriar, DenunciaResposta
+from app.services.obra_salva_service import ObraSalvaService
+from app.services.denuncia_service import DenunciaService
+
+
 @router.delete("/comentarios/{id}", status_code=status.HTTP_200_OK, summary="Excluir comentário")
 def deletar_comentario(
     id: int,
@@ -135,8 +141,73 @@ def deletar_comentario(
 ):
     """
     Remove (soft delete) um comentário existente.
-
-    O usuário só pode excluir o seu próprio comentário.
-    Admins e moderadores podem excluir qualquer comentário.
     """
     return ComentarioService.deletar_comentario(db, usuario_atual.id, id, usuario_atual.tipo_conta)
+
+
+# --- Endpoints de Obra Salva (Saved Works) ---
+
+@router.get("/postagens/salvas", response_model=List[PostagemResposta], status_code=status.HTTP_200_OK, summary="Listar minhas obras salvas")
+@router.get("/postagens/salvas/", response_model=List[PostagemResposta], status_code=status.HTTP_200_OK, include_in_schema=False)
+def listar_obras_salvas(
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna todas as obras salvas pelo usuário autenticado.
+    """
+    return ObraSalvaService.listar_salvas(db, usuario_atual.id)
+
+
+@router.post("/postagens/{id}/salvar", response_model=SalvarStatusResposta, status_code=status.HTTP_201_CREATED, summary="Salvar uma obra")
+def salvar_obra(
+    id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Registra o salvamento da obra indicada para o usuário autenticado.
+    """
+    ObraSalvaService.salvar_obra(db, usuario_atual.id, id)
+    return {"message": "Obra salva com sucesso.", "salvo": True}
+
+
+@router.delete("/postagens/{id}/salvar", status_code=status.HTTP_200_OK, summary="Remover obra dos salvos")
+def remover_salvo(
+    id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Remove o salvamento da obra para o usuário autenticado.
+    """
+    return ObraSalvaService.remover_salvo(db, usuario_atual.id, id)
+
+
+@router.get("/postagens/{id}/salvo", status_code=status.HTTP_200_OK, summary="Checar se obra está salva")
+def checar_salvo(
+    id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna se a obra indicada está salva pelo usuário autenticado.
+    """
+    return ObraSalvaService.checar_salvo(db, usuario_atual.id, id)
+
+
+# --- Endpoints de Denúncias ---
+
+@router.post("/postagens/{id}/denunciar", response_model=DenunciaResposta, status_code=status.HTTP_201_CREATED, summary="Denunciar uma obra")
+def denunciar_obra(
+    id: int,
+    dados: DenunciaCriar,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Registra uma denúncia contra a obra indicada.
+    Requer motivo obrigatório e impede auto-denúncia ou denúncias duplicadas.
+    """
+    return DenunciaService.criar_denuncia(db, usuario_atual.id, id, dados)
+

@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     as propriedades necessárias para a conexão com o banco de dados,
     Redis, segurança JWT e diretórios locais.
     """
+
     # Configurações do Servidor
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000

@@ -9,6 +9,8 @@ from app.repositories.usuario_repository import UsuarioRepository
 from app.core.config import settings
 from app.models.usuario_model import Usuario
 
+from app.redis_client import redis_client
+
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
 
 # Esquema HTTPBearer: exibe apenas o campo de Token no Swagger UI
@@ -58,7 +60,17 @@ def cadastrar(dados: UsuarioCadastro, db: Session = Depends(get_db)):
 
     Recebe nome, e-mail, CPF, telefone (opcional), senha e tipo de conta.
     Valida e salva no PostgreSQL se não houver conflito de e-mail ou CPF.
+    Aplica rate-limiting via Redis (máx. 10 solicitações/min por e-mail).
     """
+    # Rate Limiting via Redis
+    chave_limit = f"artfolio:ratelimit:cadastro:{dados.email.lower()}"
+    tentativas = redis_client.incr(chave_limit, expira_segundos=60)
+    if tentativas > 10:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Muitas tentativas de cadastro. Por favor, aguarde 1 minuto antes de tentar novamente."
+        )
+
     return UsuarioService.cadastrar(db, dados)
 
 @router.post("/login", response_model=TokenResposta)
@@ -68,7 +80,17 @@ def logar(dados: UsuarioLogin, db: Session = Depends(get_db)):
 
     Recebe e-mail e senha. Valida as credenciais, e em caso de sucesso,
     retorna um Token JWT e os dados básicos do usuário.
+    Aplica rate-limiting via Redis (máx. 10 solicitações/min por e-mail).
     """
+    # Rate Limiting via Redis
+    chave_limit = f"artfolio:ratelimit:login:{dados.email.lower()}"
+    tentativas = redis_client.incr(chave_limit, expira_segundos=60)
+    if tentativas > 10:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Muitas tentativas de login consecutivas. Por favor, aguarde 1 minuto antes de tentar novamente."
+        )
+
     return UsuarioService.login(db, dados)
 
 @router.get("/me", response_model=UsuarioResposta)

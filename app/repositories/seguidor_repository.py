@@ -55,3 +55,21 @@ class SeguidorRepository:
         return db.query(func.count(Seguidor.id)).filter(
             Seguidor.idSeguidor == usuario_id
         ).scalar() or 0
+
+    @staticmethod
+    def listar_seguidores(db: Session, usuario_id: int):
+        """
+        Retorna a lista de relacionamentos onde idSeguido == usuario_id.
+        """
+        return db.query(Seguidor).filter(
+            Seguidor.idSeguido == usuario_id
+        ).order_by(Seguidor.dataCriacao.desc()).all()
+
+    @staticmethod
+    def listar_seguindo(db: Session, usuario_id: int):
+        """
+        Retorna a lista de relacionamentos onde idSeguidor == usuario_id.
+        """
+        return db.query(Seguidor).filter(
+            Seguidor.idSeguidor == usuario_id
+        ).order_by(Seguidor.dataCriacao.desc()).all()

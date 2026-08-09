@@ -1,9 +1,28 @@
-from fastapi import HTTPException, status
+import json
+import os
+import uuid
+from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 from app.models.usuario_model import Usuario
-from app.schemas.usuario_schema import UsuarioCadastro, UsuarioLogin, UsuarioUpdateSchema, UsuarioSenhaSchema
+from app.schemas.usuario_schema import UsuarioCadastro, UsuarioLogin, UsuarioUpdateSchema, UsuarioSenhaSchema, UsuarioResposta, PerfilPublicoResposta
+from app.schemas.seguidor_schema import RelacionamentoStatusResposta
 from app.repositories.usuario_repository import UsuarioRepository
+from app.repositories.seguidor_repository import SeguidorRepository
+from app.repositories.postagem_repository import PostagemRepository
+from app.services.seguidor_service import SeguidorService
 from app.core.security import criptografar_senha, verificar_senha, criar_token_acesso
+from app.core.config import settings
+from app.redis_client import redis_client
+
+# Tipos MIME permitidos para foto de perfil
+MIME_TYPES_PERMITIDOS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+
+# Tamanho máximo da foto de perfil: 5 MB
+TAMANHO_MAXIMO_FOTO = 5 * 1024 * 1024
 
 class UsuarioService:
     """
@@ -162,7 +181,13 @@ class UsuarioService:
             setattr(usuario, campo, valor)
 
         # 5. Persistir as alterações via repositório
-        return UsuarioRepository.atualizar_usuario(db, usuario)
+        usuario_atualizado = UsuarioRepository.atualizar_usuario(db, usuario)
+
+        # 6. Invalidar cache do perfil e obras
+        redis_client.delete(f"artfolio:perfil:{usuario_id}")
+        redis_client.delete_pattern("artfolio:obras:*")
+
+        return usuario_atualizado
 
     @staticmethod
     def alterar_senha(db: Session, usuario_id: int, dados: UsuarioSenhaSchema) -> dict:
@@ -206,4 +231,188 @@ class UsuarioService:
         UsuarioRepository.alterar_senha(db, usuario, nova_senha_hash)
 
         return {"message": "Senha alterada com sucesso."}
+
+    @staticmethod
+    def atualizar_foto_perfil(db: Session, usuario_id: int, arquivo: UploadFile) -> Usuario:
+        """
+        Valida, salva e vincula uma nova foto de perfil ao usuário autenticado.
+
+        Remoção automática da foto antiga se for um arquivo local prévio.
+        """
+        usuario = UsuarioRepository.buscar_por_id(db, usuario_id)
+        if not usuario:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuário não encontrado."
+            )
+
+        # 1. Validar Tipo MIME do arquivo
+        mime_type = arquivo.content_type or ""
+        if mime_type not in MIME_TYPES_PERMITIDOS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Formato de imagem não suportado. Envie apenas arquivos JPG, PNG ou WEBP."
+            )
+
+        extensao = MIME_TYPES_PERMITIDOS[mime_type]
+
+        # 2. Ler conteúdo e validar tamanho e arquivo vazio
+        try:
+            conteudo = arquivo.file.read()
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Não foi possível ler o arquivo enviado."
+            )
+
+        if len(conteudo) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="O arquivo enviado está vazio."
+            )
+
+        if len(conteudo) > TAMANHO_MAXIMO_FOTO:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A imagem excede o tamanho máximo permitido de 5 MB."
+            )
+
+        # 3. Remover foto antiga do disco se for um upload local previo
+        if usuario.fotoPerfil and usuario.fotoPerfil.startswith("/uploads/perfis/"):
+            foto_antiga_nome = os.path.basename(usuario.fotoPerfil)
+            caminho_foto_antiga = os.path.join(settings.UPLOAD_DIR, "perfis", foto_antiga_nome)
+            if os.path.exists(caminho_foto_antiga):
+                try:
+                    os.remove(caminho_foto_antiga)
+                except Exception:
+                    pass
+
+        # 4. Gerar nome de arquivo seguro e salvar no disco
+        nome_arquivo = f"usuario_{usuario_id}_{uuid.uuid4().hex[:8]}{extensao}"
+        caminho_disco = os.path.join(settings.UPLOAD_DIR, "perfis", nome_arquivo)
+
+        try:
+            with open(caminho_disco, "wb") as f:
+                f.write(conteudo)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Erro interno ao salvar a foto de perfil no servidor."
+            )
+
+        # 5. Atualizar URL relativa no banco de dados
+        caminho_relativo = f"/uploads/perfis/{nome_arquivo}"
+        usuario.fotoPerfil = caminho_relativo
+
+        usuario_atualizado = UsuarioRepository.atualizar_usuario(db, usuario)
+
+        # 6. Invalidar cache
+        redis_client.delete(f"artfolio:perfil:{usuario_id}")
+        redis_client.delete_pattern("artfolio:obras:*")
+
+        return usuario_atualizado
+
+    @staticmethod
+    def remover_foto_perfil(db: Session, usuario_id: int) -> Usuario:
+        """
+        Remove a foto de perfil do usuário e exclui o arquivo local caso exista.
+        """
+        usuario = UsuarioRepository.buscar_por_id(db, usuario_id)
+        if not usuario:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuário não encontrado."
+            )
+
+        if usuario.fotoPerfil and usuario.fotoPerfil.startswith("/uploads/perfis/"):
+            foto_nome = os.path.basename(usuario.fotoPerfil)
+            caminho_foto = os.path.join(settings.UPLOAD_DIR, "perfis", foto_nome)
+            if os.path.exists(caminho_foto):
+                try:
+                    os.remove(caminho_foto)
+                except Exception:
+                    pass
+
+        usuario.fotoPerfil = None
+        usuario_atualizado = UsuarioRepository.atualizar_usuario(db, usuario)
+
+        # Invalidar cache
+        redis_client.delete(f"artfolio:perfil:{usuario_id}")
+        redis_client.delete_pattern("artfolio:obras:*")
+
+        return usuario_atualizado
+
+    @staticmethod
+    def buscar_perfil_com_cache(db: Session, usuario_id: int) -> Optional[UsuarioResposta]:
+        """
+        Busca o perfil público do usuário com suporte a cache Redis (artfolio:perfil:{usuario_id}).
+        """
+        cache_key = f"artfolio:perfil:{usuario_id}"
+        val_cache = redis_client.get(cache_key)
+        if val_cache:
+            try:
+                dados_json = json.loads(val_cache)
+                return UsuarioResposta.model_validate(dados_json)
+            except Exception:
+                pass
+
+        usuario = UsuarioRepository.buscar_por_id(db, usuario_id)
+        if not usuario:
+            return None
+
+        try:
+            dados_dict = UsuarioResposta.model_validate(usuario).model_dump(mode="json")
+            redis_client.set(cache_key, json.dumps(dados_dict), expira_segundos=300)
+        except Exception:
+            pass
+
+        return UsuarioResposta.model_validate(usuario)
+
+    @staticmethod
+    def obter_perfil_publico(db: Session, target_id: int, me_id: Optional[int] = None) -> PerfilPublicoResposta:
+        """
+        Retorna as informações públicas detalhadas de um usuário,
+        incluindo contagem real de seguidores, seguindo, obras e status de relacionamento com o solicitante.
+        """
+        usuario = UsuarioRepository.buscar_por_id(db, target_id)
+        if not usuario or usuario.deletado:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuário não encontrado."
+            )
+
+        seguidores_cnt = SeguidorRepository.contar_seguidores(db, target_id)
+        seguindo_cnt = SeguidorRepository.contar_seguindo(db, target_id)
+        
+        obras = PostagemRepository.listar_todas(db, usuario_id=target_id)
+        obras_cnt = len(obras)
+
+        if me_id:
+            rel_status = SeguidorService.obter_status_relacionamento(db, me_id, target_id)
+        else:
+            rel_status = RelacionamentoStatusResposta(
+                seguidoresCount=seguidores_cnt,
+                seguindoCount=seguindo_cnt
+            )
+
+        return PerfilPublicoResposta(
+            id=usuario.id,
+            nome=usuario.nome,
+            email=usuario.email,
+            telefone=usuario.telefone,
+            biografia=usuario.biografia,
+            fotoPerfil=usuario.fotoPerfil,
+            portfolio=usuario.portfolio,
+            instagram=usuario.instagram,
+            behance=usuario.behance,
+            website=usuario.website,
+            tipo_conta=usuario.tipo_conta,
+            dataCriacao=usuario.dataCriacao,
+            seguidoresCount=seguidores_cnt,
+            seguindoCount=seguindo_cnt,
+            obrasCount=obras_cnt,
+            relacionamento=rel_status
+        )
+
+
 

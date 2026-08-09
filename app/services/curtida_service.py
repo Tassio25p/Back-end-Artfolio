@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 from app.models.curtida_model import Curtida
 from app.repositories.curtida_repository import CurtidaRepository
 from app.repositories.postagem_repository import PostagemRepository
+from app.repositories.usuario_repository import UsuarioRepository
+from app.services.notificacao_service import NotificacaoService
 
 
 class CurtidaService:
@@ -17,6 +19,7 @@ class CurtidaService:
 
         Valida se a postagem existe e não está deletada.
         Verifica se o usuário já curtiu para evitar duplicatas.
+        Cria notificação automática para o proprietário da obra.
 
         Args:
             db: Sessão ativa do SQLAlchemy.
@@ -51,7 +54,22 @@ class CurtidaService:
             idUsuario=usuario_id,
             idPostagem=postagem_id
         )
-        return CurtidaRepository.criar(db, nova_curtida)
+        curtida_salva = CurtidaRepository.criar(db, nova_curtida)
+
+        # 4. Disparar notificação automática ao autor da obra
+        remetente = UsuarioRepository.buscar_por_id(db, usuario_id)
+        nome_remetente = remetente.nome if remetente else "Alguém"
+        NotificacaoService.criar_notificacao(
+            db=db,
+            id_usuario=postagem.idUsuario,
+            tipo="LIKE",
+            titulo="Nova curtida",
+            mensagem=f"{nome_remetente} curtiu sua obra.",
+            id_remetente=usuario_id,
+            id_postagem=postagem_id
+        )
+
+        return curtida_salva
 
     @staticmethod
     def descurtir(db: Session, usuario_id: int, postagem_id: int) -> dict:

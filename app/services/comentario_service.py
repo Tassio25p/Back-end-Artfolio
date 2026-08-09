@@ -4,7 +4,9 @@ from sqlalchemy.orm import Session
 from app.models.comentario_model import Comentario
 from app.repositories.comentario_repository import ComentarioRepository
 from app.repositories.postagem_repository import PostagemRepository
+from app.repositories.usuario_repository import UsuarioRepository
 from app.schemas.comentario_schema import ComentarioCriar
+from app.services.notificacao_service import NotificacaoService
 
 
 class ComentarioService:
@@ -23,6 +25,7 @@ class ComentarioService:
         Cria um novo comentário em uma postagem.
 
         Valida se a postagem existe e não está deletada.
+        Dispara notificação para o proprietário da obra.
 
         Args:
             db: Sessão ativa do SQLAlchemy.
@@ -50,7 +53,23 @@ class ComentarioService:
             idPostagem=postagem_id,
             conteudo=dados.conteudo
         )
-        return ComentarioRepository.criar(db, novo_comentario)
+        comentario_salvo = ComentarioRepository.criar(db, novo_comentario)
+
+        # 3. Disparar notificação automática ao autor da obra
+        remetente = UsuarioRepository.buscar_por_id(db, usuario_id)
+        nome_remetente = remetente.nome if remetente else "Alguém"
+        NotificacaoService.criar_notificacao(
+            db=db,
+            id_usuario=postagem.idUsuario,
+            tipo="COMMENT",
+            titulo="Novo comentário",
+            mensagem=f"{nome_remetente} comentou na sua obra.",
+            id_remetente=usuario_id,
+            id_postagem=postagem_id,
+            id_comentario=comentario_salvo.id
+        )
+
+        return comentario_salvo
 
     @staticmethod
     def listar_comentarios(db: Session, postagem_id: int) -> List[Comentario]:

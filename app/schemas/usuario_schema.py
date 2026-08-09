@@ -87,12 +87,6 @@ class UsuarioUpdateSchema(BaseModel):
         description="Biografia ou apresentação do usuário (máximo 1000 caracteres)",
         json_schema_extra={"example": "Artista digital apaixonado por ilustração e design."}
     )
-    fotoPerfil: Optional[str] = Field(
-        None,
-        max_length=255,
-        description="URL da foto de perfil do usuário",
-        json_schema_extra={"example": "https://exemplo.com/fotos/perfil.jpg"}
-    )
     portfolio: Optional[str] = Field(
         None,
         max_length=255,
@@ -279,3 +273,32 @@ class TokenResposta(BaseModel):
     usuario: UsuarioResposta
 
     model_config = ConfigDict(populate_by_name=True)
+
+
+from app.schemas.seguidor_schema import RelacionamentoStatusResposta
+
+class PerfilPublicoResposta(BaseModel):
+    """
+    Schema para dados públicos completos do perfil de um usuário,
+    incluindo contagens reais de seguidores, seguindo, obras e status de relacionamento.
+    """
+    id: int
+    nome: str
+    email: Optional[str] = None
+    telefone: Optional[str] = None
+    biografia: Optional[str] = None
+    fotoPerfil: Optional[str] = Field(None, alias="fotoPerfil")
+    portfolio: Optional[str] = None
+    instagram: Optional[str] = None
+    behance: Optional[str] = None
+    website: Optional[str] = None
+    tipo_conta: str = "cliente"
+    dataCriacao: Optional[datetime] = Field(None, alias="dataCriacao")
+    
+    seguidoresCount: int = 0
+    seguindoCount: int = 0
+    obrasCount: int = 0
+    relacionamento: RelacionamentoStatusResposta = Field(default_factory=RelacionamentoStatusResposta)
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+

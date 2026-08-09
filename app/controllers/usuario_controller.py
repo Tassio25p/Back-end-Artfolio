@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.schemas.usuario_schema import UsuarioUpdateSchema, UsuarioSenhaSchema, UsuarioResposta
-from app.schemas.seguidor_schema import SeguidorResposta
+from app.schemas.usuario_schema import UsuarioUpdateSchema, UsuarioSenhaSchema, UsuarioResposta, PerfilPublicoResposta
+from app.schemas.seguidor_schema import SeguidorResposta, RelacionamentoStatusResposta, UsuarioRelacionamentoItem
 from app.services.usuario_service import UsuarioService
 from app.services.seguidor_service import SeguidorService
 from app.controllers.auth_controller import obter_usuario_atual
@@ -37,7 +38,6 @@ def atualizar_perfil(
     - **nome**: Nome completo (mín. 3, máx. 100 caracteres)
     - **telefone**: Telefone com DDD (10-11 dígitos)
     - **biografia**: Texto livre (máx. 1000 caracteres)
-    - **fotoPerfil**: URL da imagem de perfil
     - **portfolio**: URL do portfólio
     - **instagram**: Handle ou URL do Instagram
     - **behance**: Handle ou URL do Behance
@@ -50,6 +50,55 @@ def atualizar_perfil(
     O usuário só pode editar seu próprio perfil.
     """
     return UsuarioService.atualizar_perfil(db, usuario_atual.id, dados)
+
+
+@router.put(
+    "/me/foto",
+    response_model=UsuarioResposta,
+    status_code=status.HTTP_200_OK,
+    summary="Atualizar foto de perfil do usuário autenticado",
+    responses={
+        200: {"description": "Foto de perfil atualizada com sucesso."},
+        400: {"description": "Arquivo inválido, vazio, formato não suportado ou excede 5MB."},
+        401: {"description": "Token JWT ausente ou inválido."},
+        404: {"description": "Usuário não encontrado."},
+        500: {"description": "Erro ao salvar a foto de perfil."},
+    }
+)
+def atualizar_foto_perfil(
+    foto: UploadFile = File(..., description="Arquivo de imagem da foto de perfil (JPG, PNG ou WEBP, máx. 5MB)"),
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Realiza o upload de uma nova foto de perfil em multipart/form-data.
+
+    O arquivo é validado (MIME type, extensão, tamanho máximo de 5MB) e armazenado
+    no diretório de uploads do servidor. O usuário autenticado é identificado pelo token JWT.
+    """
+    return UsuarioService.atualizar_foto_perfil(db, usuario_atual.id, foto)
+
+
+@router.delete(
+    "/me/foto",
+    response_model=UsuarioResposta,
+    status_code=status.HTTP_200_OK,
+    summary="Remover foto de perfil do usuário autenticado",
+    responses={
+        200: {"description": "Foto de perfil removida com sucesso."},
+        401: {"description": "Token JWT ausente ou inválido."},
+        404: {"description": "Usuário não encontrado."},
+    }
+)
+def remover_foto_perfil(
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Remove a foto de perfil do usuário autenticado, voltando ao avatar padrão.
+    """
+    return UsuarioService.remover_foto_perfil(db, usuario_atual.id)
+
 
 
 @router.patch(
@@ -121,3 +170,73 @@ def deixar_de_seguir_usuario(
     Remove o relacionamento de seguir entre o usuário autenticado e o usuário {id}.
     """
     return SeguidorService.deixar_de_seguir(db, usuario_atual.id, id)
+
+
+@router.get(
+    "/{id}",
+    response_model=PerfilPublicoResposta,
+    status_code=status.HTTP_200_OK,
+    summary="Obter perfil público de um usuário"
+)
+def obter_perfil_usuario(
+    id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna o perfil público completo do usuário {id},
+    incluindo contagens de seguidores, seguindo, obras e o status do relacionamento com o usuário autenticado.
+    """
+    return UsuarioService.obter_perfil_publico(db, target_id=id, me_id=usuario_atual.id)
+
+
+@router.get(
+    "/{id}/relacionamento",
+    response_model=RelacionamentoStatusResposta,
+    status_code=status.HTTP_200_OK,
+    summary="Obter status do relacionamento com um usuário"
+)
+def obter_status_relacionamento(
+    id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna as flags de relacionamento entre o usuário logado e o usuário {id} (seguindo, segueDeVolta, isMe, etc).
+    """
+    return SeguidorService.obter_status_relacionamento(db, me_id=usuario_atual.id, target_id=id)
+
+
+@router.get(
+    "/{id}/seguidores",
+    response_model=List[UsuarioRelacionamentoItem],
+    status_code=status.HTTP_200_OK,
+    summary="Listar seguidores de um usuário"
+)
+def listar_seguidores(
+    id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna a lista de usuários que seguem o perfil {id},
+    com flags informando se o usuário logado também os segue (para o botão 'Seguir de volta').
+    """
+    return SeguidorService.listar_seguidores(db, target_id=id, me_id=usuario_atual.id)
+
+
+@router.get(
+    "/{id}/seguindo",
+    response_model=List[UsuarioRelacionamentoItem],
+    status_code=status.HTTP_200_OK,
+    summary="Listar usuários que um perfil está seguindo"
+)
+def listar_seguindo(
+    id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna a lista de usuários seguidos pelo perfil {id}.
+    """
+    return SeguidorService.listar_seguindo(db, target_id=id, me_id=usuario_atual.id)

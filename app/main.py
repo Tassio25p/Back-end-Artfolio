@@ -1,9 +1,22 @@
+#Bibliotecas
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.database import engine, Base
-from app.controllers import auth_controller, postagem_controller, artista_controller, assistente_controller, usuario_controller, feed_controller
+#Controllers
+from app.controllers import (
+    auth_controller,
+    postagem_controller,
+    artista_controller,
+    assistente_controller,
+    usuario_controller,
+    feed_controller,
+    notificacao_controller,
+    admin_controller,
+)
+#Modelos
 from app.models.categoria_model import Categoria
 from app.models.postagem_model import Postagem
 from app.models.assistente_conversa_model import AssistenteConversa
@@ -11,9 +24,16 @@ from app.models.assistente_mensagem_model import AssistenteMensagem
 from app.models.curtida_model import Curtida
 from app.models.comentario_model import Comentario
 from app.models.seguidor_model import Seguidor
+from app.models.conversa_model import Conversa
+from app.models.conversa_usuario_model import ConversaUsuario
+from app.models.mensagem_model import Mensagem
+from app.models.notificacao_model import Notificacao
+from app.models.obra_salva_model import ObraSalva
+from app.models.denuncia_model import Denuncia
 
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-
+os.makedirs(os.path.join(settings.UPLOAD_DIR, "perfis"), exist_ok=True)
+#Criação das tabelas
 try:
     Base.metadata.create_all(bind=engine)
     from sqlalchemy import text
@@ -52,13 +72,13 @@ try:
                     print(f"✔ Coluna '{coluna}' adicionada com sucesso à tabela 'usuario'.")
 except Exception as e:
     print(f"Aviso: Não foi possível sincronizar o schema com o banco: {e}")
-
+#Criação da API
 app = FastAPI(
     title="Artfolio API",
     description="Backend para a plataforma artística digital Artfolio.",
     version="1.0.0"
 )
-
+#Configuração do CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Em produção, substitua pelo domínio do frontend
@@ -74,6 +94,14 @@ app.include_router(postagem_controller.router)
 app.include_router(artista_controller.router)
 app.include_router(assistente_controller.router)
 app.include_router(feed_controller.router)
+app.include_router(notificacao_controller.router)
+app.include_router(admin_controller.router)
+
+
+# Servir arquivos estáticos (uploads de fotos de perfil, obras, etc.)
+app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+
+#Endpoint de checagem de saúde
 
 @app.get("/", tags=["Status"])
 def read_root():

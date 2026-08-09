@@ -92,6 +92,7 @@ class FeedItemResposta(BaseModel):
     seguidores: int = 0
     curtido_por_mim: bool = False
     seguindo_usuario: bool = False
+    salvo_por_mim: bool = False
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
