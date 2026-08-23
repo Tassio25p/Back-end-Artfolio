@@ -12,6 +12,7 @@ from app.repositories.postagem_repository import PostagemRepository
 from app.services.seguidor_service import SeguidorService
 from app.core.security import criptografar_senha, verificar_senha, criar_token_acesso
 from app.core.config import settings
+from app.services.media_service import MediaService
 from app.redis_client import redis_client
 
 # Tipos MIME permitidos para foto de perfil
@@ -120,7 +121,14 @@ class UsuarioService:
                 detail="Esta conta foi desativada (deletada) e não pode ser acessada."
             )
 
-        # 3. Verificar se a senha confere
+        # 3. Verificar se a conta foi criada via Google sem senha
+        if not usuario.senha:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Esta conta foi criada com o Google. Por favor, acesse utilizando o botão do Google."
+            )
+
+        # 4. Verificar se a senha confere
         if not verificar_senha(dados.senha, usuario.senha):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -136,6 +144,74 @@ class UsuarioService:
         token_acesso = criar_token_acesso(dados=token_data)
 
         # 5. Retornar dados estruturados para o controller
+        return {
+            "access_token": token_acesso,
+            "token_type": "bearer",
+            "usuario": usuario
+        }
+
+    @staticmethod
+    def login_google(db: Session, token: str) -> dict:
+        """
+        Valida o ID token retornado pelo Google, cadastra o usuário se não existir e emite JWT.
+        """
+        import requests
+        from google.oauth2 import id_token
+        from google.auth.transport import requests as google_requests
+
+        id_info = None
+        google_client_id = settings.GOOGLE_CLIENT_ID or os.getenv("GOOGLE_CLIENT_ID")
+        try:
+            id_info = id_token.verify_oauth2_token(
+                token,
+                google_requests.Request(),
+                audience=google_client_id if google_client_id else None
+            )
+        except Exception:
+            try:
+                resp = requests.get(f"https://oauth2.googleapis.com/tokeninfo?id_token={token}", timeout=10)
+                if resp.status_code == 200:
+                    id_info = resp.json()
+            except Exception:
+                pass
+
+        if not id_info or not id_info.get("email"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Token do Google inválido ou expirado."
+            )
+
+        email = id_info.get("email").lower()
+        nome = id_info.get("name") or id_info.get("given_name") or email.split("@")[0]
+        foto_perfil = id_info.get("picture")
+
+        usuario = UsuarioRepository.buscar_por_email_geral(db, email)
+        if usuario:
+            if usuario.deletado:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Esta conta foi desativada (deletada) e não pode ser acessada."
+                )
+            if not usuario.fotoPerfil and foto_perfil:
+                usuario.fotoPerfil = foto_perfil
+                UsuarioRepository.salvar(db, usuario)
+        else:
+            novo_usuario = Usuario(
+                nome=nome,
+                email=email,
+                senha=None,
+                fotoPerfil=foto_perfil,
+                tipo_conta="artista"
+            )
+            usuario = UsuarioRepository.salvar(db, novo_usuario)
+
+        token_data = {
+            "sub": str(usuario.id),
+            "email": usuario.email,
+            "tipo_conta": usuario.tipo_conta
+        }
+        token_acesso = criar_token_acesso(dados=token_data)
+
         return {
             "access_token": token_acesso,
             "token_type": "bearer",
@@ -235,9 +311,7 @@ class UsuarioService:
     @staticmethod
     def atualizar_foto_perfil(db: Session, usuario_id: int, arquivo: UploadFile) -> Usuario:
         """
-        Valida, salva e vincula uma nova foto de perfil ao usuário autenticado.
-
-        Remoção automática da foto antiga se for um arquivo local prévio.
+        Valida, realiza upload no Cloudinary e vincula uma nova foto de perfil ao usuário autenticado.
         """
         usuario = UsuarioRepository.buscar_por_id(db, usuario_id)
         if not usuario:
@@ -246,67 +320,14 @@ class UsuarioService:
                 detail="Usuário não encontrado."
             )
 
-        # 1. Validar Tipo MIME do arquivo
-        mime_type = arquivo.content_type or ""
-        if mime_type not in MIME_TYPES_PERMITIDOS:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Formato de imagem não suportado. Envie apenas arquivos JPG, PNG ou WEBP."
-            )
+        # 1. Upload seguro para o Cloudinary (pasta 'artfolio/perfis', máx. 5MB)
+        secure_url = MediaService.upload_imagem(arquivo, folder="artfolio/perfis", max_size_mb=5)
 
-        extensao = MIME_TYPES_PERMITIDOS[mime_type]
-
-        # 2. Ler conteúdo e validar tamanho e arquivo vazio
-        try:
-            conteudo = arquivo.file.read()
-        except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Não foi possível ler o arquivo enviado."
-            )
-
-        if len(conteudo) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="O arquivo enviado está vazio."
-            )
-
-        if len(conteudo) > TAMANHO_MAXIMO_FOTO:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A imagem excede o tamanho máximo permitido de 5 MB."
-            )
-
-        # 3. Remover foto antiga do disco se for um upload local previo
-        if usuario.fotoPerfil and usuario.fotoPerfil.startswith("/uploads/perfis/"):
-            foto_antiga_nome = os.path.basename(usuario.fotoPerfil)
-            caminho_foto_antiga = os.path.join(settings.UPLOAD_DIR, "perfis", foto_antiga_nome)
-            if os.path.exists(caminho_foto_antiga):
-                try:
-                    os.remove(caminho_foto_antiga)
-                except Exception:
-                    pass
-
-        # 4. Gerar nome de arquivo seguro e salvar no disco
-        nome_arquivo = f"usuario_{usuario_id}_{uuid.uuid4().hex[:8]}{extensao}"
-        caminho_disco = os.path.join(settings.UPLOAD_DIR, "perfis", nome_arquivo)
-
-        try:
-            with open(caminho_disco, "wb") as f:
-                f.write(conteudo)
-        except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Erro interno ao salvar a foto de perfil no servidor."
-            )
-
-        # 5. Atualizar URL relativa no banco de dados
-        caminho_relativo = f"/uploads/perfis/{nome_arquivo}"
-        usuario.fotoPerfil = caminho_relativo
-
+        # 2. Atualizar URL no banco de dados
+        usuario.fotoPerfil = secure_url
         usuario_atualizado = UsuarioRepository.atualizar_usuario(db, usuario)
 
-        # 6. Invalidar cache
+        # 3. Invalidar cache
         redis_client.delete(f"artfolio:perfil:{usuario_id}")
         redis_client.delete_pattern("artfolio:obras:*")
 
@@ -413,6 +434,20 @@ class UsuarioService:
             obrasCount=obras_cnt,
             relacionamento=rel_status
         )
+
+    @staticmethod
+    def listar_artistas(db: Session, busca: Optional[str] = None) -> List[PerfilPublicoResposta]:
+        """
+        Retorna a lista de perfis públicos de todos os artistas/usuários cadastrados ativos,
+        aplicando o filtro de busca caso informado.
+        """
+        artistas = UsuarioRepository.listar_artistas(db, busca=busca)
+        resultado = []
+        for artista in artistas:
+            perfil = UsuarioService.obter_perfil_publico(db, target_id=artista.id)
+            resultado.append(perfil)
+        return resultado
+
 
 
 

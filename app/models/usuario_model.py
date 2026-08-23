@@ -1,38 +1,54 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, func
+from datetime import datetime
+from typing import Optional
+from sqlalchemy import String, Text, Boolean, DateTime, func
+from sqlalchemy.orm import Mapped, mapped_column, synonym
 from app.database import Base
 
 class Usuario(Base):
     """
     Modelo SQLAlchemy que representa a tabela 'usuario' no PostgreSQL.
-
-    Este modelo mapeia diretamente os campos e tipos definidos no script SQL,
-    incluindo as colunas de deleção lógica (soft delete) e os campos em camelCase.
-    Além disso, adiciona o campo 'tipo_conta' para controle de permissões.
-    
-    NOTA: Caso você já tenha rodado o script SQL inicial sem a coluna 'tipo_conta',
-    será necessário executar o seguinte comando no seu banco de dados:
-    ALTER TABLE Usuario ADD COLUMN tipo_conta VARCHAR(20) NOT NULL DEFAULT 'cliente';
+    Mapeia todos os campos definidos no schema do banco de dados,
+    incluindo autoidentificação de Pessoa Física/Jurídica (PF/PJ),
+    aceite dos termos de uso, soft delete e dados dinâmicos de portfólio.
     """
     __tablename__ = "usuario"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    nome = Column(String(100), nullable=False)
-    email = Column(String(100), unique=True, nullable=False, index=True)
-    senha = Column(String(255), nullable=False)  # Armazenará o hash da senha gerado pelo bcrypt
-    cpf = Column(String(14), unique=True, nullable=False, index=True)
-    telefone = Column(String(20), nullable=True)
-    biografia = Column(Text, nullable=True)
-    fotoPerfil = Column("fotoperfil", String(255), nullable=True)
-    dataCriacao = Column("datacriacao", DateTime, server_default=func.now())
-    portfolio = Column(String(255), nullable=True)
-    instagram = Column(String(255), nullable=True)
-    behance = Column(String(255), nullable=True)
-    website = Column(String(255), nullable=True)
-    deletado = Column(Boolean, default=False)
-    dataDelecao = Column("datadelecao", DateTime, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    nome: Mapped[str] = mapped_column(String(100), nullable=False)
+    email: Mapped[Optional[str]] = mapped_column(String(100), unique=True, nullable=True, index=True)
+    senha: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Hash gerado pelo bcrypt ou None para login com Google
+    tipo_usuario: Mapped[str] = mapped_column("tipo_usuario", String(20), nullable=False, default="PF")  # 'PF' ou 'PJ'
+    cpf_cnpj: Mapped[Optional[str]] = mapped_column("cpf_cnpj", String(18), unique=True, nullable=True, index=True)
+    telefone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    biografia: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fotoPerfil: Mapped[Optional[str]] = mapped_column("fotoperfil", String(255), nullable=True)
+    portfolio: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     
-    # Campo adicionado para atender os requisitos de tipo de conta (cliente, artista, moderador, admin)
-    tipo_conta = Column("tipo_conta", String(20), nullable=False, default="cliente")
+    # Redes sociais opcionais
+    instagram: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    behance: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    website: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
-    def __repr__(self):
-        return f"<Usuario(id={self.id}, nome='{self.nome}', email='{self.email}', tipo_conta='{self.tipo_conta}')>"
+    # Campos de Portfólio Dinâmico e Currículo Artístico
+    trajetoria: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    especializacoes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    certificados: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON stringificado com certificados/documentos
+    
+    # Conformidade legal e Termos de Uso
+    termoAceito: Mapped[bool] = mapped_column("termoaceito", Boolean, nullable=False, default=False)
+    dataAceiteTermo: Mapped[Optional[datetime]] = mapped_column("dataaceitetermo", DateTime, nullable=True)
+    versaoTermo: Mapped[Optional[str]] = mapped_column("versaotermo", String(10), nullable=True)
+
+    # Auditoria e Soft delete
+    dataCriacao: Mapped[Optional[datetime]] = mapped_column("datacriacao", DateTime, server_default=func.now())
+    deletado: Mapped[bool] = mapped_column(Boolean, default=False)
+    dataDelecao: Mapped[Optional[datetime]] = mapped_column("datadelecao", DateTime, nullable=True)
+    
+    # Papel da conta para controle de permissões
+    tipo_conta: Mapped[str] = mapped_column("tipo_conta", String(20), nullable=False, default="artista")
+
+    # Sinônimo para compatibilidade com código que usa usuario.cpf
+    cpf = synonym("cpf_cnpj")
+
+    def __repr__(self) -> str:
+        return f"<Usuario(id={self.id}, nome='{self.nome}', email='{self.email}', tipo_usuario='{self.tipo_usuario}')>"

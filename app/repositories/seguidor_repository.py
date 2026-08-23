@@ -1,13 +1,13 @@
 from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from app.models.seguidor_model import Seguidor
-
+from app.models.usuario_model import Usuario
 
 class SeguidorRepository:
     """
     Repositório de dados para a entidade Seguidor.
-    Encapsula consultas SQL/SQLAlchemy no PostgreSQL.
+    Encapsula consultas SQL/SQLAlchemy no PostgreSQL com chave composta.
+    Garante que contas excluídas não contem nos seguidores e seguindo.
     """
 
     @staticmethod
@@ -41,35 +41,47 @@ class SeguidorRepository:
     @staticmethod
     def contar_seguidores(db: Session, usuario_id: int) -> int:
         """
-        Conta quantas pessoas seguem um usuário específico.
+        Conta quantas pessoas ativas seguem um usuário específico.
         """
-        return db.query(func.count(Seguidor.id)).filter(
-            Seguidor.idSeguido == usuario_id
-        ).scalar() or 0
+        return db.query(Seguidor).join(
+            Usuario, Usuario.id == Seguidor.idSeguidor
+        ).filter(
+            Seguidor.idSeguido == usuario_id,
+            Usuario.deletado == False
+        ).count()
 
     @staticmethod
     def contar_seguindo(db: Session, usuario_id: int) -> int:
         """
-        Conta quantas pessoas um usuário está seguindo.
+        Conta quantas pessoas ativas um usuário está seguindo.
         """
-        return db.query(func.count(Seguidor.id)).filter(
-            Seguidor.idSeguidor == usuario_id
-        ).scalar() or 0
+        return db.query(Seguidor).join(
+            Usuario, Usuario.id == Seguidor.idSeguido
+        ).filter(
+            Seguidor.idSeguidor == usuario_id,
+            Usuario.deletado == False
+        ).count()
 
     @staticmethod
     def listar_seguidores(db: Session, usuario_id: int):
         """
-        Retorna a lista de relacionamentos onde idSeguido == usuario_id.
+        Retorna a lista de relacionamentos onde idSeguido == usuario_id com usuários ativos.
         """
-        return db.query(Seguidor).filter(
-            Seguidor.idSeguido == usuario_id
-        ).order_by(Seguidor.dataCriacao.desc()).all()
+        return db.query(Seguidor).join(
+            Usuario, Usuario.id == Seguidor.idSeguidor
+        ).filter(
+            Seguidor.idSeguido == usuario_id,
+            Usuario.deletado == False
+        ).order_by(Seguidor.dataSeguiu.desc()).all()
 
     @staticmethod
     def listar_seguindo(db: Session, usuario_id: int):
         """
-        Retorna a lista de relacionamentos onde idSeguidor == usuario_id.
+        Retorna a lista de relacionamentos onde idSeguidor == usuario_id com usuários ativos.
         """
-        return db.query(Seguidor).filter(
-            Seguidor.idSeguidor == usuario_id
-        ).order_by(Seguidor.dataCriacao.desc()).all()
+        return db.query(Seguidor).join(
+            Usuario, Usuario.id == Seguidor.idSeguido
+        ).filter(
+            Seguidor.idSeguidor == usuario_id,
+            Usuario.deletado == False
+        ).order_by(Seguidor.dataSeguiu.desc()).all()

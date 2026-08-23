@@ -1,25 +1,19 @@
-from sqlalchemy import Column, Integer, DateTime, ForeignKey, UniqueConstraint, func
+from datetime import datetime
+from typing import Optional
+from sqlalchemy import DateTime, ForeignKey, func
+from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
-
 
 class Curtida(Base):
     """
     Modelo SQLAlchemy que representa a tabela 'curtida' no PostgreSQL.
-
-    Armazena as curtidas (likes) dos usuários nas postagens.
-    Possui uma constraint UNIQUE para evitar curtidas duplicadas
-    do mesmo usuário na mesma postagem.
+    Armazena as curtidas (likes) dos usuários nas postagens com chave composta (idusuario, idpostagem).
     """
     __tablename__ = "curtida"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    idUsuario = Column("idusuario", Integer, ForeignKey("usuario.id"), nullable=False, index=True)
-    idPostagem = Column("idpostagem", Integer, ForeignKey("postagem.id"), nullable=False, index=True)
-    dataCriacao = Column("datacriacao", DateTime, server_default=func.now())
+    idUsuario: Mapped[int] = mapped_column("idusuario", ForeignKey("usuario.id"), primary_key=True)
+    idPostagem: Mapped[int] = mapped_column("idpostagem", ForeignKey("postagem.id"), primary_key=True)
+    dataCurtida: Mapped[Optional[datetime]] = mapped_column("datacurtida", DateTime, server_default=func.now(), nullable=True)
 
-    __table_args__ = (
-        UniqueConstraint("idusuario", "idpostagem", name="uq_curtida_usuario_postagem"),
-    )
-
-    def __repr__(self):
-        return f"<Curtida(id={self.id}, idUsuario={self.idUsuario}, idPostagem={self.idPostagem})>"
+    def __repr__(self) -> str:
+        return f"<Curtida(idUsuario={self.idUsuario}, idPostagem={self.idPostagem})>"

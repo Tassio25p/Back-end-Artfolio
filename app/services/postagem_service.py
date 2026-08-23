@@ -2,7 +2,9 @@ import json
 from typing import List, Optional
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from app.models.postagem_model import Postagem
+from app.models.categoria_model import Categoria
 from app.repositories.postagem_repository import PostagemRepository
 from app.schemas.postagem_schema import PostagemCriar, PostagemAtualizar, PostagemResposta
 from app.redis_client import redis_client
@@ -17,13 +19,15 @@ class PostagemService:
     def listar_obras(
         db: Session,
         usuario_id: Optional[int] = None,
-        categoria_id: Optional[int] = None
-    ) -> List:
+        categoria_id: Optional[int] = None,
+        termo_busca: Optional[str] = None,
+        usuario_atual_id: Optional[int] = None
+    ) -> List[Postagem]:
         """
         Retorna a lista de obras ativas no sistema, aplicando os filtros caso fornecidos.
         Utiliza cache Redis (artfolio:obras:*) com fallback transparente para o PostgreSQL.
         """
-        cache_key = f"artfolio:obras:user_{usuario_id or 'all'}_cat_{categoria_id or 'all'}"
+        cache_key = f"artfolio:obras:user_{usuario_id or 'all'}_cat_{categoria_id or 'all'}_busca_{termo_busca or 'none'}"
 
         # 1. Buscar do cache Redis
         val_cache = redis_client.get(cache_key)
@@ -35,7 +39,12 @@ class PostagemService:
                 pass
 
         # 2. Buscar no PostgreSQL (fonte oficial)
-        obras = PostagemRepository.listar_todas(db, usuario_id=usuario_id, categoria_id=categoria_id)
+        obras = PostagemRepository.listar_todas(
+            db,
+            usuario_id=usuario_id,
+            categoria_id=categoria_id,
+            termo_busca=termo_busca
+        )
 
         # 3. Salvar no Redis com expiração de 300 segundos (5 minutos)
         try:
@@ -47,7 +56,7 @@ class PostagemService:
         return obras
 
     @staticmethod
-    def buscar_obra_por_id(db: Session, postagem_id: int) -> Postagem:
+    def buscar_obra_por_id(db: Session, postagem_id: int, usuario_atual_id: Optional[int] = None) -> Postagem:
         """
         Busca uma obra pelo ID com cache Redis. Lança exceção HTTP 404 se não encontrada.
         """
@@ -83,15 +92,30 @@ class PostagemService:
     def criar_postagem(db: Session, usuario_id: int, dados: PostagemCriar) -> Postagem:
         """
         Cria e persiste uma nova postagem no banco de dados.
+        Associa categorias via tabela associativa postagem_categoria.
         Invalida o cache de obras no Redis.
         """
+        categoria_ids: List[int] = []
+        if dados.idCategorias:
+            categoria_ids.extend(dados.idCategorias)
+        if dados.idCategoria and dados.idCategoria not in categoria_ids:
+            categoria_ids.append(dados.idCategoria)
+        if dados.nomesCategorias:
+            for cat_nome in dados.nomesCategorias:
+                if cat_nome and cat_nome.strip():
+                    cat = db.query(Categoria).filter(
+                        func.lower(Categoria.nomeCategoria) == cat_nome.strip().lower(),
+                        Categoria.deletado == False
+                    ).first()
+                    if cat and cat.id not in categoria_ids:
+                        categoria_ids.append(cat.id)
+
         nova_postagem = Postagem(
             idUsuario=usuario_id,
-            idCategoria=dados.idCategoria,
             legenda=dados.legenda,
             arquivoUrl=dados.arquivoUrl,
         )
-        postagem_criada = PostagemRepository.criar(db, nova_postagem)
+        postagem_criada = PostagemRepository.criar(db, nova_postagem, categoria_ids=categoria_ids)
 
         # Invalida o cache de obras
         redis_client.delete_pattern("artfolio:obras:*")
@@ -117,14 +141,18 @@ class PostagemService:
                 detail="Você não tem permissão para alterar esta postagem."
             )
 
-        if dados.idCategoria is not None:
-            obra.idCategoria = dados.idCategoria
+        categoria_ids = None
+        if dados.idCategorias is not None:
+            categoria_ids = list(dados.idCategorias)
+        elif dados.idCategoria is not None:
+            categoria_ids = [dados.idCategoria]
+
         if dados.legenda is not None:
             obra.legenda = dados.legenda
         if dados.arquivoUrl is not None:
             obra.arquivoUrl = dados.arquivoUrl
 
-        postagem_atualizada = PostagemRepository.atualizar(db, obra)
+        postagem_atualizada = PostagemRepository.atualizar(db, obra, categoria_ids=categoria_ids)
 
         # Invalida o cache de obras
         redis_client.delete_pattern("artfolio:obras:*")
@@ -154,4 +182,5 @@ class PostagemService:
 
         # Invalida o cache de obras
         redis_client.delete_pattern("artfolio:obras:*")
+
 

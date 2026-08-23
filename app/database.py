@@ -1,5 +1,5 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from app.core.config import settings
 
 # Criação da Engine do SQLAlchemy para PostgreSQL
@@ -16,8 +16,9 @@ SessionLocal = sessionmaker(
     bind=engine
 )
 
-# Classe base para os modelos SQLAlchemy do banco de dados
-Base = declarative_base()
+# Classe base para os modelos SQLAlchemy do banco de dados (SQLAlchemy 2.0)
+class Base(DeclarativeBase):
+    pass
 
 def get_db():
     """

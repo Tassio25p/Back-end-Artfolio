@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # Configurações do Redis
     REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
+    REDIS_PORT: int = 16379
     REDIS_PASSWORD: str = ""
     REDIS_DB: int = 0
 
@@ -36,10 +36,17 @@ class Settings(BaseSettings):
     # Diretórios
     UPLOAD_DIR: str = "uploads"
 
+    # Configurações do Cloudinary
+    CLOUDINARY_CLOUD_NAME: str = ""
+    CLOUDINARY_API_KEY: str = ""
+    CLOUDINARY_API_SECRET: str = ""
+
+    # Configuração do Google OAuth2
+    GOOGLE_CLIENT_ID: str = ""
+
     # Configuração de leitura de arquivos .env
     model_config = SettingsConfigDict(
-        env_file=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
-        env_file_encoding="utf-8",
+        env_file=".env",
         extra="ignore"
     )
 
@@ -50,7 +57,8 @@ class Settings(BaseSettings):
 
         Monta a string de conexão síncrona usando psycopg2.
         """
-        return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        # Adicionado o '+psycopg2' aqui:
+        return f"postgresql+psycopg2://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
 # Instância única para importação em todo o projeto
 settings = Settings()

@@ -1,5 +1,7 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, func, UniqueConstraint
-from sqlalchemy.orm import relationship
+from datetime import datetime
+from typing import Optional
+from sqlalchemy import String, Text, DateTime, ForeignKey, func, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
@@ -11,20 +13,20 @@ class Denuncia(Base):
     """
     __tablename__ = "denuncia"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    idUsuario = Column("idusuario", Integer, ForeignKey("usuario.id"), nullable=False, index=True) # Denunciante
-    idPostagem = Column("idpostagem", Integer, ForeignKey("postagem.id"), nullable=False, index=True) # Obra denunciada
-    motivo = Column(String(100), nullable=False)
-    descricao = Column(Text, nullable=True)
-    status = Column(String(20), default="PENDENTE") # PENDENTE, EM_ANALISE, RESOLVIDA, REJEITADA
-    dataCriacao = Column("datacriacao", DateTime, server_default=func.now())
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    idUsuario: Mapped[int] = mapped_column("idusuario", ForeignKey("usuario.id"), nullable=False, index=True)  # Denunciante
+    idPostagem: Mapped[int] = mapped_column("idpostagem", ForeignKey("postagem.id"), nullable=False, index=True)  # Obra denunciada
+    motivo: Mapped[str] = mapped_column(String(100), nullable=False)
+    descricao: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="PENDENTE")  # PENDENTE, EM_ANALISE, RESOLVIDA, REJEITADA
+    dataCriacao: Mapped[Optional[datetime]] = mapped_column("datacriacao", DateTime, server_default=func.now())
 
     __table_args__ = (
         UniqueConstraint("idusuario", "idpostagem", name="uq_denuncia_usuario_postagem"),
     )
 
-    usuario = relationship("Usuario", lazy="joined")
-    postagem = relationship("Postagem", lazy="joined")
+    usuario: Mapped["Usuario"] = relationship("Usuario", lazy="joined")
+    postagem: Mapped["Postagem"] = relationship("Postagem", lazy="joined")
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<Denuncia(id={self.id}, idUsuario={self.idUsuario}, idPostagem={self.idPostagem}, motivo='{self.motivo}')>"

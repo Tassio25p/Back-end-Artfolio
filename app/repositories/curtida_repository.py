@@ -1,8 +1,6 @@
 from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from app.models.curtida_model import Curtida
-
 
 class CurtidaRepository:
     """
@@ -43,6 +41,6 @@ class CurtidaRepository:
         """
         Conta o número total de curtidas de uma postagem.
         """
-        return db.query(func.count(Curtida.id)).filter(
+        return db.query(Curtida).filter(
             Curtida.idPostagem == postagem_id
-        ).scalar() or 0
+        ).count()

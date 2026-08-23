@@ -1,5 +1,7 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, func
-from sqlalchemy.orm import relationship
+from datetime import datetime
+from typing import Optional
+from sqlalchemy import String, Text, Boolean, DateTime, ForeignKey, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
@@ -13,24 +15,24 @@ class Notificacao(Base):
     """
     __tablename__ = "notificacao"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    idUsuario = Column("idusuario", Integer, ForeignKey("usuario.id"), nullable=False, index=True)
-    tipo = Column(String(20), nullable=False)  # 'LIKE', 'FOLLOW', 'COMMENT', 'MESSAGE'
-    titulo = Column(String(100), nullable=False)
-    mensagem = Column(Text, nullable=False)
-    idRemetente = Column("idremetente", Integer, ForeignKey("usuario.id"), nullable=True)
-    idPostagem = Column("idpostagem", Integer, ForeignKey("postagem.id"), nullable=True)
-    idComentario = Column("idcomentario", Integer, ForeignKey("comentario.id"), nullable=True)
-    idConversa = Column("idconversa", Integer, ForeignKey("conversa.id"), nullable=True)
-    lida = Column(Boolean, default=False)
-    dataCriacao = Column("datacriacao", DateTime, server_default=func.now())
-    deletado = Column(Boolean, default=False)
-    dataDelecao = Column("datadelecao", DateTime, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    idUsuario: Mapped[int] = mapped_column("idusuario", ForeignKey("usuario.id"), nullable=False, index=True)
+    tipo: Mapped[str] = mapped_column(String(20), nullable=False)  # 'LIKE', 'FOLLOW', 'COMMENT', 'MESSAGE'
+    titulo: Mapped[str] = mapped_column(String(100), nullable=False)
+    mensagem: Mapped[str] = mapped_column(Text, nullable=False)
+    idRemetente: Mapped[Optional[int]] = mapped_column("idremetente", ForeignKey("usuario.id"), nullable=True)
+    idPostagem: Mapped[Optional[int]] = mapped_column("idpostagem", ForeignKey("postagem.id"), nullable=True)
+    idComentario: Mapped[Optional[int]] = mapped_column("idcomentario", ForeignKey("comentario.id"), nullable=True)
+    idConversa: Mapped[Optional[int]] = mapped_column("idconversa", ForeignKey("conversa.id"), nullable=True)
+    lida: Mapped[bool] = mapped_column(Boolean, default=False)
+    dataCriacao: Mapped[Optional[datetime]] = mapped_column("datacriacao", DateTime, server_default=func.now())
+    deletado: Mapped[bool] = mapped_column(Boolean, default=False)
+    dataDelecao: Mapped[Optional[datetime]] = mapped_column("datadelecao", DateTime, nullable=True)
 
     # Relacionamentos para carregar dados do destinatário, remetente e postagem
-    usuario = relationship("Usuario", foreign_keys=[idUsuario], lazy="joined")
-    remetente = relationship("Usuario", foreign_keys=[idRemetente], lazy="joined")
-    postagem = relationship("Postagem", foreign_keys=[idPostagem], lazy="joined")
+    usuario: Mapped["Usuario"] = relationship("Usuario", foreign_keys=[idUsuario], lazy="joined")
+    remetente: Mapped[Optional["Usuario"]] = relationship("Usuario", foreign_keys=[idRemetente], lazy="joined")
+    postagem: Mapped[Optional["Postagem"]] = relationship("Postagem", foreign_keys=[idPostagem], lazy="joined")
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<Notificacao(id={self.id}, idUsuario={self.idUsuario}, tipo='{self.tipo}', lida={self.lida})>"

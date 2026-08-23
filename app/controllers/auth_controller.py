@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.schemas.usuario_schema import UsuarioCadastro, UsuarioLogin, UsuarioResposta, TokenResposta
+from app.schemas.usuario_schema import UsuarioCadastro, UsuarioLogin, UsuarioResposta, TokenResposta, GoogleLoginSchema
 from app.services.usuario_service import UsuarioService
 from app.repositories.usuario_repository import UsuarioRepository
 from app.core.config import settings
@@ -14,9 +15,9 @@ from app.redis_client import redis_client
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
 
 # Esquema HTTPBearer: exibe apenas o campo de Token no Swagger UI
-
 security = HTTPBearer()
-
+security_opcional = HTTPBearer(auto_error=False)
+# endpoint de obtenção de usuario atual
 def obter_usuario_atual(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)) -> Usuario:
     """
     Injeta o usuário atualmente autenticado nas rotas privadas.
@@ -30,10 +31,7 @@ def obter_usuario_atual(credentials: HTTPAuthorizationCredentials = Depends(secu
         detail="Credenciais inválidas ou token expirado.",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    try:
-        
-        # Decodifica o token JWT usando a chave e o algoritmo configurados
-
+    try: # esse try execpt faz a validação do token, verificando se ele é válido e se o usuário existe no banco de dados
         payload = jwt.decode(
             token, 
             settings.JWT_SECRET_KEY, 
@@ -46,23 +44,42 @@ def obter_usuario_atual(credentials: HTTPAuthorizationCredentials = Depends(secu
     except (JWTError, ValueError):
         raise excecao_credenciais
 
-    # Busca o usuário ativo no banco de dados
     usuario = UsuarioRepository.buscar_por_id(db, usuario_id)
     if usuario is None:
         raise excecao_credenciais
 
     return usuario
 
+ # endpoint de obtenção de usuario opcional
+def obter_usuario_opcional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_opcional),
+    db: Session = Depends(get_db)
+) -> Optional[Usuario]:
+    """
+    Injeta o usuário autenticado caso o token exista e seja válido,
+    ou retorna None para requisições de visitantes.
+    """
+    if not credentials or not credentials.credentials:
+        return None
+    try: # esse try execpt faz a validação do token verificando se ele é válido e se o usuário existe no banco de dados
+        token = credentials.credentials
+        payload = jwt.decode(
+            token, 
+            settings.JWT_SECRET_KEY, 
+            algorithms=[settings.JWT_ALGORITHM]
+        )
+        usuario_id_str: str = payload.get("sub")
+        if usuario_id_str:
+            return UsuarioRepository.buscar_por_id(db, int(usuario_id_str))
+    except Exception:
+        return None
+    return None
+ # esse endpoint e pra cadastrar usuario
 @router.post("/cadastro", response_model=UsuarioResposta, status_code=status.HTTP_201_CREATED)
 def cadastrar(dados: UsuarioCadastro, db: Session = Depends(get_db)):
     """
     Cria um novo usuário real no banco de dados.
-
-    Recebe nome, e-mail, CPF, telefone (opcional), senha e tipo de conta.
-    Valida e salva no PostgreSQL se não houver conflito de e-mail ou CPF.
-    Aplica rate-limiting via Redis (máx. 10 solicitações/min por e-mail).
     """
-    # Rate Limiting via Redis
     chave_limit = f"artfolio:ratelimit:cadastro:{dados.email.lower()}"
     tentativas = redis_client.incr(chave_limit, expira_segundos=60)
     if tentativas > 10:
@@ -77,12 +94,7 @@ def cadastrar(dados: UsuarioCadastro, db: Session = Depends(get_db)):
 def logar(dados: UsuarioLogin, db: Session = Depends(get_db)):
     """
     Realiza o login do usuário no sistema.
-
-    Recebe e-mail e senha. Valida as credenciais, e em caso de sucesso,
-    retorna um Token JWT e os dados básicos do usuário.
-    Aplica rate-limiting via Redis (máx. 10 solicitações/min por e-mail).
     """
-    # Rate Limiting via Redis
     chave_limit = f"artfolio:ratelimit:login:{dados.email.lower()}"
     tentativas = redis_client.incr(chave_limit, expira_segundos=60)
     if tentativas > 10:
@@ -93,11 +105,16 @@ def logar(dados: UsuarioLogin, db: Session = Depends(get_db)):
 
     return UsuarioService.login(db, dados)
 
+@router.post("/google", response_model=TokenResposta, summary="Login ou Cadastro com Google")
+def login_google(dados: GoogleLoginSchema, db: Session = Depends(get_db)):
+    """
+    Autentica ou cadastra um usuário automaticamente utilizando o ID token do Google.
+    """
+    return UsuarioService.login_google(db, dados.token)
+
 @router.get("/me", response_model=UsuarioResposta)
 def obter_me(usuario_atual: Usuario = Depends(obter_usuario_atual)):
     """
     Retorna os dados do usuário atualmente logado.
-
-    Essa rota é protegida e exige um Bearer Token JWT válido no cabeçalho.
     """
     return usuario_atual

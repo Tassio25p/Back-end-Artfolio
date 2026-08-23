@@ -1,4 +1,7 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from datetime import datetime
+from typing import Optional
+from sqlalchemy import String, Boolean, DateTime
+from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
 class Categoria(Base):
@@ -7,10 +10,10 @@ class Categoria(Base):
     """
     __tablename__ = "categoria"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    nomeCategoria = Column("nomecategoria", String(50), unique=True, nullable=False)
-    deletado = Column(Boolean, default=False)
-    dataDelecao = Column("datadelecao", DateTime, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    nomeCategoria: Mapped[str] = mapped_column("nomecategoria", String(50), unique=True, nullable=False)
+    deletado: Mapped[bool] = mapped_column(Boolean, default=False)
+    dataDelecao: Mapped[Optional[datetime]] = mapped_column("datadelecao", DateTime, nullable=True)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<Categoria(id={self.id}, nomeCategoria='{self.nomeCategoria}')>"

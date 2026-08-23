@@ -1,5 +1,7 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, func
-from sqlalchemy.orm import relationship
+from datetime import datetime
+from typing import Optional
+from sqlalchemy import String, Text, DateTime, ForeignKey, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 class Log(Base):
@@ -11,16 +13,16 @@ class Log(Base):
     """
     __tablename__ = "log"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    idUsuario = Column("idusuario", Integer, ForeignKey("usuario.id"), nullable=True)
-    acao = Column(String(50), nullable=False)
-    tabelaAfetada = Column("tabelaafetada", String(50), nullable=False)
-    dataHora = Column("datahora", DateTime, server_default=func.now())
-    idRegistroAfetado = Column("idregistroafetado", Integer, nullable=True)
-    descricao = Column(Text, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    idUsuario: Mapped[Optional[int]] = mapped_column("idusuario", ForeignKey("usuario.id"), nullable=True)
+    acao: Mapped[str] = mapped_column(String(50), nullable=False)
+    tabelaAfetada: Mapped[str] = mapped_column("tabelaafetada", String(50), nullable=False)
+    dataHora: Mapped[Optional[datetime]] = mapped_column("datahora", DateTime, server_default=func.now())
+    idRegistroAfetado: Mapped[Optional[int]] = mapped_column("idregistroafetado", nullable=True)
+    descricao: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relacionamento
-    usuario = relationship("Usuario", lazy="joined")
+    usuario: Mapped[Optional["Usuario"]] = relationship("Usuario", lazy="joined")
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<Log(id={self.id}, acao='{self.acao}', tabelaAfetada='{self.tabelaAfetada}')>"

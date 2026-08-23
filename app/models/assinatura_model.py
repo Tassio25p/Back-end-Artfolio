@@ -1,5 +1,7 @@
-from sqlalchemy import Column, Integer, Boolean, DateTime, ForeignKey, func
-from sqlalchemy.orm import relationship
+from datetime import datetime
+from typing import Optional
+from sqlalchemy import Boolean, DateTime, ForeignKey, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 class Assinatura(Base):
@@ -14,18 +16,18 @@ class Assinatura(Base):
     """
     __tablename__ = "assinatura"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    idUsuario = Column("idusuario", Integer, ForeignKey("usuario.id"), nullable=False)
-    idPlano = Column("idplano", Integer, ForeignKey("plano.id"), nullable=False)
-    dataInicio = Column("datainicio", DateTime, server_default=func.now())
-    dataFim = Column("datafim", DateTime, nullable=True)
-    ativa = Column(Boolean, default=True)
-    deletado = Column(Boolean, default=False)
-    dataDelecao = Column("datadelecao", DateTime, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    idUsuario: Mapped[int] = mapped_column("idusuario", ForeignKey("usuario.id"), nullable=False)
+    idPlano: Mapped[int] = mapped_column("idplano", ForeignKey("plano.id"), nullable=False)
+    dataInicio: Mapped[Optional[datetime]] = mapped_column("datainicio", DateTime, server_default=func.now())
+    dataFim: Mapped[Optional[datetime]] = mapped_column("datafim", DateTime, nullable=True)
+    ativa: Mapped[bool] = mapped_column(Boolean, default=True)
+    deletado: Mapped[bool] = mapped_column(Boolean, default=False)
+    dataDelecao: Mapped[Optional[datetime]] = mapped_column("datadelecao", DateTime, nullable=True)
 
     # Relacionamentos
-    usuario = relationship("Usuario", lazy="joined")
-    plano = relationship("Plano", lazy="joined")
+    usuario: Mapped["Usuario"] = relationship("Usuario", lazy="joined")
+    plano: Mapped["Plano"] = relationship("Plano", lazy="joined")
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<Assinatura(id={self.id}, idUsuario={self.idUsuario}, idPlano={self.idPlano}, ativa={self.ativa})>"

@@ -89,6 +89,26 @@ def marcar_como_lida(
 
 
 @router.delete(
+    "/todas",
+    status_code=status.HTTP_200_OK,
+    summary="Excluir todas as notificações"
+)
+@router.delete(
+    "/todas/",
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False
+)
+def deletar_todas_notificacoes(
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Exclui todas as notificações do usuário autenticado.
+    """
+    return NotificacaoService.deletar_todas(db, usuario_atual.id)
+
+
+@router.delete(
     "/{id}",
     status_code=status.HTTP_200_OK,
     summary="Excluir uma notificação"

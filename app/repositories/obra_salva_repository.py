@@ -20,6 +20,13 @@ class ObraSalvaRepository:
         ).first()
 
     @staticmethod
+    def contar_por_postagem(db: Session, postagem_id: int) -> int:
+        """
+        Retorna o total de vezes que uma obra foi salva/favoritada.
+        """
+        return db.query(ObraSalva).filter(ObraSalva.idPostagem == postagem_id).count()
+
+    @staticmethod
     def criar(db: Session, obra_salva: ObraSalva) -> ObraSalva:
         """
         Persiste o registro de salvamento de uma obra no banco de dados.

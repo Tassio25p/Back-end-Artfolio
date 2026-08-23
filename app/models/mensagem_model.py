@@ -1,5 +1,7 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, func
-from sqlalchemy.orm import relationship
+from datetime import datetime
+from typing import Optional
+from sqlalchemy import String, Text, Boolean, DateTime, ForeignKey, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 class Mensagem(Base):
@@ -14,18 +16,19 @@ class Mensagem(Base):
     """
     __tablename__ = "mensagem"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    idRemetente = Column("idremetente", Integer, ForeignKey("usuario.id"), nullable=False)
-    idConversa = Column("idconversa", Integer, ForeignKey("conversa.id"), nullable=False)
-    conteudo = Column(Text, nullable=True)
-    arquivoUrl = Column("arquivourl", String(255), nullable=True)
-    dataEnvio = Column("dataenvio", DateTime, server_default=func.now())
-    deletado = Column(Boolean, default=False)
-    dataDelecao = Column("datadelecao", DateTime, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    idRemetente: Mapped[int] = mapped_column("idremetente", ForeignKey("usuario.id"), nullable=False)
+    idConversa: Mapped[int] = mapped_column("idconversa", ForeignKey("conversa.id"), nullable=False)
+    conteudo: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    arquivoUrl: Mapped[Optional[str]] = mapped_column("arquivourl", String(255), nullable=True)
+    dataEnvio: Mapped[Optional[datetime]] = mapped_column("dataenvio", DateTime, server_default=func.now())
+    deletado: Mapped[bool] = mapped_column(Boolean, default=False)
+    deletadoPor: Mapped[Optional[str]] = mapped_column("deletado_por", String(255), default="")
+    dataDelecao: Mapped[Optional[datetime]] = mapped_column("datadelecao", DateTime, nullable=True)
 
     # Relacionamentos
-    remetente = relationship("Usuario", lazy="joined")
-    conversa = relationship("Conversa", lazy="joined")
+    remetente: Mapped["Usuario"] = relationship("Usuario", lazy="joined")
+    conversa: Mapped["Conversa"] = relationship("Conversa", lazy="joined")
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<Mensagem(id={self.id}, idRemetente={self.idRemetente}, idConversa={self.idConversa})>"
