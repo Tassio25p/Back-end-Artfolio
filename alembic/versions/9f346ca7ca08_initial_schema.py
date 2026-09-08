@@ -1,8 +1,8 @@
 """initial_schema
 
-Revision ID: f2f1fa90dd71
+Revision ID: 9f346ca7ca08
 Revises: 
-Create Date: 2026-08-21 21:50:21.091758
+Create Date: 2026-09-05 20:05:33.310951
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'f2f1fa90dd71'
+revision: str = '9f346ca7ca08'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -40,6 +40,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('isativo', sa.Boolean(), nullable=True),
     sa.Column('tipo', sa.String(length=100), nullable=False),
+    sa.Column('precoplano', sa.Numeric(precision=10, scale=2), nullable=True),
     sa.Column('descricao', sa.Text(), nullable=True),
     sa.Column('deletado', sa.Boolean(), nullable=True),
     sa.Column('datadelecao', sa.DateTime(), nullable=True),
@@ -49,7 +50,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('nome', sa.String(length=100), nullable=False),
     sa.Column('email', sa.String(length=100), nullable=True),
-    sa.Column('senha', sa.String(length=255), nullable=False),
+    sa.Column('senha', sa.String(length=255), nullable=True),
     sa.Column('tipo_usuario', sa.String(length=20), nullable=False),
     sa.Column('cpf_cnpj', sa.String(length=18), nullable=True),
     sa.Column('telefone', sa.String(length=20), nullable=True),
@@ -69,6 +70,8 @@ def upgrade() -> None:
     sa.Column('deletado', sa.Boolean(), nullable=False),
     sa.Column('datadelecao', sa.DateTime(), nullable=True),
     sa.Column('tipo_conta', sa.String(length=20), nullable=False),
+    sa.Column('mostrar_moldura_led', sa.Boolean(), nullable=False),
+    sa.Column('mensagem_cta', sa.Text(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_usuario_cpf_cnpj'), 'usuario', ['cpf_cnpj'], unique=True)
@@ -126,6 +129,7 @@ def upgrade() -> None:
     sa.Column('idusuario', sa.Integer(), nullable=False),
     sa.Column('legenda', sa.Text(), nullable=True),
     sa.Column('arquivourl', sa.String(length=255), nullable=False),
+    sa.Column('arquivos', sa.Text(), nullable=True),
     sa.Column('visualizacoes', sa.BigInteger(), nullable=False),
     sa.Column('datapostagem', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
     sa.Column('deletado', sa.Boolean(), nullable=False),
@@ -275,3 +279,30 @@ def downgrade() -> None:
     op.drop_table('conversa')
     op.drop_table('categoria')
     # ### end Alembic commands ###
+
+
+    # Criação da view necessária para o trending
+    op.execute("""
+        CREATE OR REPLACE VIEW vw_postagem_detalhada AS
+        SELECT 
+            p.id AS idpostagem,
+            p.idusuario AS idusuario,
+            u.nome AS nomeusuario,
+            u.fotoperfil AS fotoperfilusuario,
+            p.legenda,
+            p.arquivourl,
+            p.datapostagem,
+            p.visualizacoes,
+            COALESCE((
+                SELECT string_agg(cat.nomecategoria, ', ')
+                FROM postagem_categoria pc
+                JOIN categoria cat ON cat.id = pc.idcategoria
+                WHERE pc.idpostagem = p.id
+            ), '') AS categorias_nomes,
+            (SELECT COUNT(*) FROM curtida cur WHERE cur.idpostagem = p.id)::int AS totalcurtidas,
+            (SELECT COUNT(*) FROM comentario com WHERE com.idpostagem = p.id AND com.deletado = false)::int AS totalcomentarios,
+            (SELECT COUNT(*) FROM obra_salva os WHERE os.idpostagem = p.id)::int AS totalsalvos
+        FROM postagem p
+        JOIN usuario u ON u.id = p.idusuario
+        WHERE p.deletado = false;
+    """)

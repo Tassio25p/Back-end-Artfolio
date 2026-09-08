@@ -126,6 +126,15 @@ class UsuarioUpdateSchema(BaseModel):
         None,
         description="Certificados, qualificações e documentos (JSON estruturado)"
     )
+    mostrar_moldura_led: Optional[bool] = Field(
+        None,
+        description="Ativar ou desativar a moldura de LED do plano ao redor do avatar"
+    )
+    mensagem_cta: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Mensagem padrão de encomenda/orçamento que abre no chat"
+    )
 
     @field_validator("telefone")
     @classmethod
@@ -217,11 +226,25 @@ class UsuarioResposta(BaseModel):
     especializacoes: Optional[str] = None
     certificados: Optional[str] = None
     tipo_conta: str = "artista"
+    papel: Optional[str] = "artista"
+    ativo: bool = True
+    suspenso_ate: Optional[datetime] = None
+    mostrar_moldura_led: bool = True
+    mensagem_cta: Optional[str] = None
+    plano: str = "Free"
     termoAceito: Optional[bool] = True
     dataAceiteTermo: Optional[datetime] = None
     versaoTermo: Optional[str] = "v1.0"
     dataCriacao: Optional[datetime] = Field(None, alias="dataCriacao")
     deletado: bool = False
+
+    @model_validator(mode="after")
+    def sincronizar_papel(self) -> "UsuarioResposta":
+        if not self.papel and self.tipo_conta:
+            self.papel = self.tipo_conta
+        elif not self.tipo_conta and self.papel:
+            self.tipo_conta = self.papel
+        return self
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -256,6 +279,9 @@ class PerfilPublicoResposta(BaseModel):
     certificados: Optional[str] = None
     tipo_conta: str = "artista"
     tipo_usuario: Optional[str] = "PF"
+    mostrar_moldura_led: bool = True
+    mensagem_cta: Optional[str] = None
+    plano: str = "Free"
     dataCriacao: Optional[datetime] = Field(None, alias="dataCriacao")
     
     seguidoresCount: int = 0
@@ -264,5 +290,15 @@ class PerfilPublicoResposta(BaseModel):
     curtidasTotais: int = 0
     visualizacoesTotais: int = 0
     relacionamento: RelacionamentoStatusResposta = Field(default_factory=RelacionamentoStatusResposta)
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+class UsuarioItemBusca(BaseModel):
+    id: int
+    nome: str
+    fotoPerfil: Optional[str] = Field(None, alias="fotoPerfil")
+    tipo_conta: str = "artista"
+    plano: str = "Free"
+    mostrar_moldura_led: bool = True
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

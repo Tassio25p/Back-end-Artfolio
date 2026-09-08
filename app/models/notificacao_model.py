@@ -17,22 +17,48 @@ class Notificacao(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     idUsuario: Mapped[int] = mapped_column("idusuario", ForeignKey("usuario.id"), nullable=False, index=True)
-    tipo: Mapped[str] = mapped_column(String(20), nullable=False)  # 'LIKE', 'FOLLOW', 'COMMENT', 'MESSAGE'
+    tipo: Mapped[str] = mapped_column(String(50), nullable=False)  # 'mensagem', 'proposta', 'seguidor', 'curtida', 'comentario', 'sistema', etc.
     titulo: Mapped[str] = mapped_column(String(100), nullable=False)
     mensagem: Mapped[str] = mapped_column(Text, nullable=False)
     idRemetente: Mapped[Optional[int]] = mapped_column("idremetente", ForeignKey("usuario.id"), nullable=True)
     idPostagem: Mapped[Optional[int]] = mapped_column("idpostagem", ForeignKey("postagem.id"), nullable=True)
     idComentario: Mapped[Optional[int]] = mapped_column("idcomentario", ForeignKey("comentario.id"), nullable=True)
     idConversa: Mapped[Optional[int]] = mapped_column("idconversa", ForeignKey("conversa.id"), nullable=True)
+    referencia_id: Mapped[Optional[int]] = mapped_column("referencia_id", nullable=True)
+    link_acao: Mapped[Optional[str]] = mapped_column("link_acao", String(255), nullable=True)
     lida: Mapped[bool] = mapped_column(Boolean, default=False)
-    dataCriacao: Mapped[Optional[datetime]] = mapped_column("datacriacao", DateTime, server_default=func.now())
+    dataCriacao: Mapped[Optional[datetime]] = mapped_column("datacriacao", DateTime, server_default=func.now(), default=datetime.utcnow)
     deletado: Mapped[bool] = mapped_column(Boolean, default=False)
     dataDelecao: Mapped[Optional[datetime]] = mapped_column("datadelecao", DateTime, nullable=True)
+
+    # Sinônimos para conformidade com a convenção padronizada da Central de Notificações
+    from sqlalchemy.orm import synonym
+    usuario_id = synonym("idUsuario")
+    conteudo = synonym("mensagem")
+    criado_em = synonym("dataCriacao")
 
     # Relacionamentos para carregar dados do destinatário, remetente e postagem
     usuario: Mapped["Usuario"] = relationship("Usuario", foreign_keys=[idUsuario], lazy="joined")
     remetente: Mapped[Optional["Usuario"]] = relationship("Usuario", foreign_keys=[idRemetente], lazy="joined")
     postagem: Mapped[Optional["Postagem"]] = relationship("Postagem", foreign_keys=[idPostagem], lazy="joined")
+
+    @property
+    def referencia_id_efetiva(self) -> Optional[int]:
+        if self.referencia_id is not None:
+            return self.referencia_id
+        return self.idConversa or self.idPostagem or self.idComentario
+
+    @property
+    def link_acao_efetivo(self) -> Optional[str]:
+        if self.link_acao:
+            return self.link_acao
+        if self.idConversa:
+            return f"/mensagens?chat={self.idConversa}"
+        if self.idPostagem:
+            return "/feed"
+        if self.tipo and str(self.tipo).upper() in ("SEGUIDOR", "FOLLOW"):
+            return "/seguidores"
+        return "/notificacoes"
 
     def __repr__(self) -> str:
         return f"<Notificacao(id={self.id}, idUsuario={self.idUsuario}, tipo='{self.tipo}', lida={self.lida})>"

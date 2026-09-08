@@ -1,3 +1,4 @@
+import json
 from typing import List
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -7,11 +8,13 @@ from app.repositories.postagem_repository import PostagemRepository
 from app.repositories.usuario_repository import UsuarioRepository
 from app.schemas.comentario_schema import ComentarioCriar
 from app.services.notificacao_service import NotificacaoService
+from app.redis_client import redis_client
 
 
 class ComentarioService:
     """
     Serviço contendo as regras de negócio para comentários.
+    Invalida o cache do feed no Redis e emite eventos WebSocket em tempo real.
     """
 
     @staticmethod
@@ -22,22 +25,7 @@ class ComentarioService:
         dados: ComentarioCriar
     ) -> Comentario:
         """
-        Cria um novo comentário em uma postagem.
-
-        Valida se a postagem existe e não está deletada.
-        Dispara notificação para o proprietário da obra.
-
-        Args:
-            db: Sessão ativa do SQLAlchemy.
-            usuario_id: ID do usuário autenticado (do JWT).
-            postagem_id: ID da postagem a ser comentada.
-            dados: Schema com o conteúdo do comentário.
-
-        Returns:
-            O objeto Comentario criado com dados do usuário.
-
-        Raises:
-            HTTPException 404: Se a postagem não for encontrada.
+        Cria um novo comentário em uma postagem e emite evento WebSocket com contagem atualizada.
         """
         # 1. Verificar se a postagem existe e está ativa
         postagem = PostagemRepository.buscar_por_id(db, postagem_id)
@@ -55,19 +43,47 @@ class ComentarioService:
         )
         comentario_salvo = ComentarioRepository.criar(db, novo_comentario)
 
-        # 3. Disparar notificação automática ao autor da obra
+        # 3. Invalidar o cache do Feed no Redis
+        redis_client.delete_pattern("artfolio:obras:*")
+
+        # 4. Calcular total atualizado de comentários
+        total_comentarios = ComentarioRepository.contar_por_postagem(db, postagem_id)
+
+        # 5. Disparar notificação automática e evento WebSocket ao autor da obra
         remetente = UsuarioRepository.buscar_por_id(db, usuario_id)
         nome_remetente = remetente.nome if remetente else "Alguém"
-        NotificacaoService.criar_notificacao(
+        foto_remetente = getattr(remetente, "fotoPerfil", None) if remetente else None
+
+        notificacao = NotificacaoService.criar_notificacao(
             db=db,
             id_usuario=postagem.idUsuario,
             tipo="COMMENT",
             titulo="Novo comentário",
-            mensagem=f"{nome_remetente} comentou na sua obra.",
+            mensagem=f"{nome_remetente} comentou na sua publicação.",
             id_remetente=usuario_id,
             id_postagem=postagem_id,
-            id_comentario=comentario_salvo.id
+            id_comentario=comentario_salvo.id,
+            publicar_ws=False
         )
+
+        payload_ws = {
+            "id": notificacao.id if notificacao else None,
+            "tipo": "COMENTARIO",
+            "postagem_id": postagem_id,
+            "idPostagem": postagem_id,
+            "total_comentarios": total_comentarios,
+            "mensagem": f"{nome_remetente} comentou na sua publicação.",
+            "remetente": {
+                "id": remetente.id if remetente else usuario_id,
+                "nome": nome_remetente,
+                "fotoPerfil": foto_remetente
+            },
+            "naoLidasCount": NotificacaoService.contar_nao_lidas(db, postagem.idUsuario)
+        }
+        try:
+            redis_client.publish(f"notificacoes:{postagem.idUsuario}", json.dumps(payload_ws, ensure_ascii=False))
+        except Exception:
+            pass
 
         return comentario_salvo
 
@@ -75,18 +91,6 @@ class ComentarioService:
     def listar_comentarios(db: Session, postagem_id: int) -> List[Comentario]:
         """
         Lista todos os comentários ativos de uma postagem.
-
-        Valida se a postagem existe antes de listar.
-
-        Args:
-            db: Sessão ativa do SQLAlchemy.
-            postagem_id: ID da postagem.
-
-        Returns:
-            Lista de objetos Comentario com dados dos usuários.
-
-        Raises:
-            HTTPException 404: Se a postagem não for encontrada.
         """
         postagem = PostagemRepository.buscar_por_id(db, postagem_id)
         if not postagem:
@@ -105,23 +109,7 @@ class ComentarioService:
         tipo_conta: str
     ) -> dict:
         """
-        Exclui um comentário (soft delete).
-
-        O usuário só pode excluir o próprio comentário.
-        Moderadores e admins podem excluir qualquer comentário.
-
-        Args:
-            db: Sessão ativa do SQLAlchemy.
-            usuario_id: ID do usuário autenticado (do JWT).
-            comentario_id: ID do comentário a ser excluído.
-            tipo_conta: Tipo de conta do usuário autenticado.
-
-        Returns:
-            Dicionário com mensagem de sucesso.
-
-        Raises:
-            HTTPException 404: Se o comentário não for encontrado.
-            HTTPException 403: Se o usuário não tiver permissão.
+        Exclui um comentário (soft delete) e invalida o cache do Feed.
         """
         # 1. Buscar o comentário
         comentario = ComentarioRepository.buscar_por_id(db, comentario_id)
@@ -139,6 +127,28 @@ class ComentarioService:
                 detail="Você não tem permissão para excluir este comentário."
             )
 
+        postagem_id = comentario.idPostagem
+        postagem = PostagemRepository.buscar_por_id(db, postagem_id)
+
         # 3. Soft delete
         ComentarioRepository.deletar(db, comentario)
-        return {"message": "Comentário excluído com sucesso."}
+
+        # 4. Invalidar o cache do Feed no Redis
+        redis_client.delete_pattern("artfolio:obras:*")
+
+        total_comentarios = ComentarioRepository.contar_por_postagem(db, postagem_id)
+
+        if postagem:
+            payload_ws = {
+                "tipo": "COMENTARIO",
+                "postagem_id": postagem_id,
+                "idPostagem": postagem_id,
+                "total_comentarios": total_comentarios,
+                "removido": True
+            }
+            try:
+                redis_client.publish(f"notificacoes:{postagem.idUsuario}", json.dumps(payload_ws, ensure_ascii=False))
+            except Exception:
+                pass
+
+        return {"message": "Comentário excluído com sucesso.", "total_comentarios": total_comentarios}

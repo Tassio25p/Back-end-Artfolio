@@ -15,8 +15,10 @@ class Postagem(Base):
     idUsuario: Mapped[int] = mapped_column("idusuario", ForeignKey("usuario.id"), nullable=False)
     legenda: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     arquivoUrl: Mapped[str] = mapped_column("arquivourl", String(255), nullable=False)
+    arquivos_raw: Mapped[Optional[str]] = mapped_column("arquivos", Text, nullable=True)
     visualizacoes: Mapped[int] = mapped_column(BigInteger, default=0)
     dataPostagem: Mapped[Optional[datetime]] = mapped_column("datapostagem", DateTime, server_default=func.now())
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="publicada")  # 'publicada', 'quarentena', 'pendente', 'rejeitada'
     deletado: Mapped[bool] = mapped_column(Boolean, default=False)
     dataDelecao: Mapped[Optional[datetime]] = mapped_column("datadelecao", DateTime, nullable=True)
 
@@ -47,6 +49,24 @@ class Postagem(Base):
         """Retorna o ID da categoria principal para compatibilidade."""
         cat = self.categoria
         return cat.id if cat else None
+
+    @property
+    def lista_arquivos(self) -> List[str]:
+        """Retorna lista de URLs de arquivos da postagem para suporte a carrossel."""
+        if self.arquivos_raw:
+            try:
+                import json
+                parsed = json.loads(self.arquivos_raw)
+                if isinstance(parsed, list):
+                    return parsed
+            except Exception:
+                return [a.strip() for a in self.arquivos_raw.split(",") if a.strip()]
+        return [self.arquivoUrl] if self.arquivoUrl else []
+
+    @property
+    def arquivos(self) -> List[str]:
+        """Property para Pydantic PostagemResposta carregar o carrossel."""
+        return self.lista_arquivos
 
     def __repr__(self) -> str:
         return f"<Postagem(id={self.id}, idUsuario={self.idUsuario})>"

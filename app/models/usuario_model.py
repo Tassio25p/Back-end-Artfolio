@@ -44,11 +44,18 @@ class Usuario(Base):
     deletado: Mapped[bool] = mapped_column(Boolean, default=False)
     dataDelecao: Mapped[Optional[datetime]] = mapped_column("datadelecao", DateTime, nullable=True)
     
-    # Papel da conta para controle de permissões
+    # Papel da conta e configurações de plano/personalização
     tipo_conta: Mapped[str] = mapped_column("tipo_conta", String(20), nullable=False, default="artista")
+    mostrar_moldura_led: Mapped[bool] = mapped_column("mostrar_moldura_led", Boolean, default=True)
+    mensagem_cta: Mapped[Optional[str]] = mapped_column("mensagem_cta", Text, nullable=True)
 
-    # Sinônimo para compatibilidade com código que usa usuario.cpf
+    # Status de conta e moderação
+    ativo: Mapped[bool] = mapped_column("ativo", Boolean, nullable=False, default=True)
+    suspenso_ate: Mapped[Optional[datetime]] = mapped_column("suspenso_ate", DateTime, nullable=True)
+
+    # Sinônimos para compatibilidade
     cpf = synonym("cpf_cnpj")
+    papel = synonym("tipo_conta")
 
     def __repr__(self) -> str:
         return f"<Usuario(id={self.id}, nome='{self.nome}', email='{self.email}', tipo_usuario='{self.tipo_usuario}')>"

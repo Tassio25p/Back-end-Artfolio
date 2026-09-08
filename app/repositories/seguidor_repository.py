@@ -50,6 +50,9 @@ class SeguidorRepository:
             Usuario.deletado == False
         ).count()
 
+    # Alias para compatibilidade
+    contar_por_usuario = contar_seguidores
+
     @staticmethod
     def contar_seguindo(db: Session, usuario_id: int) -> int:
         """

@@ -118,10 +118,14 @@ class UsuarioRepository:
         Executa o insert/update, commita a transação e atualiza o objeto
         para conter os valores gerados pelo banco (como ID e data de criação).
         """
-        db.add(usuario)
-        db.commit()
-        db.refresh(usuario)
-        return usuario
+        try:
+            db.add(usuario)
+            db.commit()
+            db.refresh(usuario)
+            return usuario
+        except Exception:
+            db.rollback()
+            raise
 
     @staticmethod
     def atualizar_usuario(db: Session, usuario: Usuario) -> Usuario:

@@ -7,7 +7,10 @@ from app.database import get_db
 from app.schemas.mensagem_schema import (
     ConversaResposta,
     MensagemResposta,
-    MensagemCriar
+    MensagemCriar,
+    MensagemEditar,
+    DenunciaChatCriar,
+    DenunciaChatResposta
 )
 from app.services.mensagem_service import MensagemService
 from app.controllers.auth_controller import obter_usuario_atual
@@ -40,7 +43,7 @@ def obter_ou_criar_conversa(
     return MensagemService.obter_ou_criar_conversa(db, usuario_atual.id, destinatario_id)
 
 @router.post("/{conversa_id}/mensagens", response_model=MensagemResposta, status_code=status.HTTP_201_CREATED, summary="Enviar mensagem na conversa")
-def enviar_mensagem(
+async def enviar_mensagem(
     conversa_id: int,
     dados: MensagemCriar,
     usuario_atual: Usuario = Depends(obter_usuario_atual),
@@ -49,7 +52,7 @@ def enviar_mensagem(
     """
     Envia uma nova mensagem na conversa indicada.
     """
-    return MensagemService.enviar_mensagem(db, usuario_atual.id, conversa_id, dados)
+    return await MensagemService.enviar_mensagem(db, usuario_atual.id, conversa_id, dados)
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED, summary="Fazer upload de anexo para mensagem de chat")
 def upload_anexo_chat(
@@ -94,13 +97,108 @@ def limpar_conversa(
     """
     return MensagemService.limpar_conversa(db, usuario_atual.id, conversa_id)
 
-@router.delete("/mensagens/{mensagem_id}", status_code=status.HTTP_200_OK, summary="Excluir mensagem individual")
-def deletar_mensagem(
+@router.delete("/mensagens/{mensagem_id}", status_code=status.HTTP_200_OK, summary="Excluir mensagem (Soft Delete)")
+async def deletar_mensagem(
     mensagem_id: int,
     usuario_atual: Usuario = Depends(obter_usuario_atual),
     db: Session = Depends(get_db)
 ):
     """
-    Oculta uma mensagem individual exclusivamente para o usuário autenticado.
+    Aplica Soft Delete na mensagem marcando deletado_em e emitindo evento via WebSocket.
     """
-    return MensagemService.deletar_mensagem_individual(db, usuario_atual.id, mensagem_id)
+    return await MensagemService.soft_delete_mensagem(db, usuario_atual.id, mensagem_id)
+
+@router.patch("/mensagens/{mensagem_id}", response_model=MensagemResposta, status_code=status.HTTP_200_OK, summary="Editar mensagem")
+async def editar_mensagem(
+    mensagem_id: int,
+    dados: MensagemEditar,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Edita o conteúdo de uma mensagem enviada há no máximo 15 minutos pelo usuário autenticado.
+    """
+    return await MensagemService.editar_mensagem(db, usuario_atual.id, mensagem_id, dados)
+
+@router.post("/denuncias", response_model=DenunciaChatResposta, status_code=status.HTTP_201_CREATED, summary="Registrar denúncia de conversa/usuário")
+def registrar_denuncia_chat(
+    dados: DenunciaChatCriar,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Registra uma denúncia de moderação vinculada ao usuário logado (denunciante_id).
+    """
+    return MensagemService.criar_denuncia_chat(db, usuario_atual.id, dados)
+
+@router.patch("/{conversa_id}/ler", status_code=status.HTTP_200_OK, summary="Marcar mensagens da conversa como lidas")
+async def marcar_mensagens_como_lidas(
+    conversa_id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Marca todas as mensagens não lidas recebidas nesta conversa como lidas.
+    """
+    return await MensagemService.marcar_como_lida(db, usuario_atual.id, conversa_id)
+
+# Router auxiliar com prefixo /chat para compatibilidade total com clientes frontend
+chat_router = APIRouter(prefix="/chat", tags=["Chat / Mensagens"])
+
+@chat_router.patch("/conversas/{conversa_id}/ler", status_code=status.HTTP_200_OK, summary="Marcar mensagens da conversa como lidas (alias /chat)")
+async def marcar_mensagens_como_lidas_chat(
+    conversa_id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Marca todas as mensagens não lidas recebidas nesta conversa como lidas (rota alternativa com prefixo /chat).
+    """
+    return await MensagemService.marcar_como_lida(db, usuario_atual.id, conversa_id)
+
+@chat_router.patch("/mensagens/{mensagem_id}", response_model=MensagemResposta, status_code=status.HTTP_200_OK, summary="Editar mensagem (alias /chat)")
+async def editar_mensagem_chat(
+    mensagem_id: int,
+    dados: MensagemEditar,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Edita o conteúdo de uma mensagem enviada há no máximo 15 minutos pelo usuário autenticado.
+    """
+    return await MensagemService.editar_mensagem(db, usuario_atual.id, mensagem_id, dados)
+
+@chat_router.delete("/mensagens/{mensagem_id}", status_code=status.HTTP_200_OK, summary="Excluir mensagem Soft Delete (alias /chat)")
+async def deletar_mensagem_chat(
+    mensagem_id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Aplica Soft Delete na mensagem marcando deletado_em e emitindo evento via WebSocket.
+    """
+    return await MensagemService.soft_delete_mensagem(db, usuario_atual.id, mensagem_id)
+
+@chat_router.post("/denuncias", response_model=DenunciaChatResposta, status_code=status.HTTP_201_CREATED, summary="Registrar denúncia de conversa/usuário (alias /chat)")
+def registrar_denuncia_chat_alias(
+    dados: DenunciaChatCriar,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Registra uma denúncia de moderação vinculada ao usuário logado (denunciante_id).
+    """
+    return MensagemService.criar_denuncia_chat(db, usuario_atual.id, dados)
+
+@chat_router.post("/{conversa_id}/mensagens", response_model=MensagemResposta, status_code=status.HTTP_201_CREATED, summary="Enviar mensagem na conversa (alias /chat)")
+@chat_router.post("/conversas/{conversa_id}/mensagens", response_model=MensagemResposta, status_code=status.HTTP_201_CREATED, include_in_schema=False)
+async def enviar_mensagem_chat_alias(
+    conversa_id: int,
+    dados: MensagemCriar,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Envia uma nova mensagem na conversa indicada (rota alternativa com prefixo /chat).
+    """
+    return await MensagemService.enviar_mensagem(db, usuario_atual.id, conversa_id, dados)

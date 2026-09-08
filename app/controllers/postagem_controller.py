@@ -1,7 +1,7 @@
 import os
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Query, status, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, Query, status, HTTPException, UploadFile, File, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.config import settings
@@ -18,6 +18,7 @@ from app.services.obra_salva_service import ObraSalvaService
 from app.services.denuncia_service import DenunciaService
 from app.controllers.auth_controller import obter_usuario_atual, obter_usuario_opcional
 from app.models.usuario_model import Usuario
+from app.core.limiter import limiter
 
 router = APIRouter(tags=["Obras / Postagens"])
 
@@ -45,6 +46,16 @@ def listar_obras(
         usuario_atual_id=user_id
     )
 
+@router.get("/categorias", status_code=status.HTTP_200_OK, summary="Listar todas as categorias oficiais")
+@router.get("/categorias/", status_code=status.HTTP_200_OK, include_in_schema=False)
+def listar_categorias(db: Session = Depends(get_db)):
+    """
+    Retorna a lista completa de categorias oficiais cadastradas no PostgreSQL.
+    """
+    from app.models.categoria_model import Categoria
+    categorias = db.query(Categoria).filter(Categoria.deletado == False).order_by(Categoria.nomeCategoria.asc()).all()
+    return [{"id": c.id, "nomeCategoria": c.nomeCategoria} for c in categorias]
+
 @router.get("/postagens/salvas", response_model=List[PostagemResposta], status_code=status.HTTP_200_OK, summary="Listar minhas obras salvas")
 @router.get("/postagens/salvas/", response_model=List[PostagemResposta], status_code=status.HTTP_200_OK, include_in_schema=False)
 @router.get("/obras/salvas", response_model=List[PostagemResposta], status_code=status.HTTP_200_OK, include_in_schema=False)
@@ -61,14 +72,16 @@ def listar_obras_salvas(
 @router.get("/obras/{id}", response_model=PostagemResposta, status_code=status.HTTP_200_OK, summary="Obter obra por ID")
 def obter_obra_por_id(
     id: int,
+    request: Request,
     usuario_atual: Optional[Usuario] = Depends(obter_usuario_opcional),
     db: Session = Depends(get_db)
 ):
     """
-    Retorna os detalhes de uma obra específica através do seu ID.
+    Retorna os detalhes de uma obra específica através do seu ID com métricas sincronizadas.
     """
     user_id = usuario_atual.id if usuario_atual else None
-    return PostagemService.buscar_obra_por_id(db, id, usuario_atual_id=user_id)
+    client_ip = request.client.host if request.client else None
+    return PostagemService.buscar_obra_por_id(db, id, usuario_atual_id=user_id, client_ip=client_ip)
 
 @router.post("/postagens", response_model=PostagemResposta, status_code=status.HTTP_201_CREATED, summary="Criar postagem")
 @router.post("/obras", response_model=PostagemResposta, status_code=status.HTTP_201_CREATED, include_in_schema=False)
@@ -95,7 +108,9 @@ def atualizar_postagem(
     return PostagemService.atualizar_postagem(db, id, usuario_atual.id, dados)
 
 @router.post("/postagens/upload", status_code=status.HTTP_201_CREATED, summary="Fazer upload de imagem de obra")
+@limiter.limit("10/minute")
 def upload_imagem_obra(
+    request: Request,
     arquivo: UploadFile = File(...),
     usuario_atual: Usuario = Depends(obter_usuario_atual)
 ):
@@ -122,7 +137,9 @@ def deletar_postagem(
 
 @router.post("/postagens/{id}/like", response_model=CurtidaResposta, status_code=status.HTTP_201_CREATED, summary="Curtir postagem")
 @router.post("/postagens/{id}/curtir", response_model=CurtidaResposta, status_code=status.HTTP_201_CREATED, include_in_schema=False)
+@limiter.limit("30/minute")
 def curtir_postagem(
+    request: Request,
     id: int,
     usuario_atual: Usuario = Depends(obter_usuario_atual),
     db: Session = Depends(get_db)
@@ -148,7 +165,9 @@ def descurtir_postagem(
 # --- Endpoints de Comentários ---
 
 @router.post("/postagens/{id}/comentarios", response_model=ComentarioResposta, status_code=status.HTTP_201_CREATED, summary="Comentar em uma postagem")
+@limiter.limit("30/minute")
 def criar_comentario(
+    request: Request,
     id: int,
     dados: ComentarioCriar,
     usuario_atual: Usuario = Depends(obter_usuario_atual),

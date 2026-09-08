@@ -1,3 +1,4 @@
+import json
 from typing import List
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -15,18 +16,19 @@ class SeguidorService:
     """
 
     @staticmethod
-    def seguir(db: Session, seguidor_id: int, seguido_id: int) -> Seguidor:
+    def alternar_seguir(db: Session, seguidor_id: int, seguido_id: int) -> dict:
         """
-        Registra que um usuário passou a seguir outro.
+        Alterna o relacionamento de seguir entre dois usuários:
+        - Se seguidor_id == seguido_id: bloqueia com erro 400.
+        - Se já existe vínculo: remove (unfollow), commita, invalida cache e retorna {"status": "sucesso", "seguindo": False, "total_seguidores": novo_total} sem disparar notificação.
+        - Se não existe vínculo: cria (follow), commita, invalida cache, dispara notificação e evento WebSocket para o seguido e retorna {"status": "sucesso", "seguindo": True, "total_seguidores": novo_total}.
         """
-        # 1. Não permitir seguir a si mesmo
         if seguidor_id == seguido_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Você não pode seguir a si mesmo."
+                detail="Você não pode seguir seu próprio perfil."
             )
 
-        # 2. Verificar se o usuário a ser seguido existe e está ativo
         usuario_seguido = UsuarioRepository.buscar_por_id(db, seguido_id)
         if not usuario_seguido:
             raise HTTPException(
@@ -34,60 +36,119 @@ class SeguidorService:
                 detail="Usuário não encontrado."
             )
 
-        # 3. Verificar se já segue
         relacao_existente = SeguidorRepository.buscar(db, seguidor_id, seguido_id)
+
         if relacao_existente:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Você já está seguindo este usuário."
+            # Unfollow: remove o registro do banco
+            SeguidorRepository.deletar(db, relacao_existente)
+
+            # Invalidação de cache no Redis
+            redis_client.delete(f"artfolio:perfil:{seguidor_id}")
+            redis_client.delete(f"artfolio:perfil:{seguido_id}")
+            redis_client.delete_pattern("artfolio:obras:*")
+
+            novo_total = SeguidorRepository.contar_por_usuario(db, seguido_id)
+
+            payload_ws = {
+                "tipo": "SEGUIDOR",
+                "seguido_id": seguido_id,
+                "total_seguidores": novo_total,
+                "mensagem": "Um usuário deixou de seguir você."
+            }
+            try:
+                redis_client.publish(f"notificacoes:{seguido_id}", json.dumps(payload_ws, ensure_ascii=False))
+            except Exception:
+                pass
+
+            return {
+                "status": "sucesso",
+                "seguindo": False,
+                "total_seguidores": novo_total
+            }
+        else:
+            # Follow: cria novo relacionamento
+            novo_seguidor = Seguidor(
+                idSeguidor=seguidor_id,
+                idSeguido=seguido_id
+            )
+            SeguidorRepository.criar(db, novo_seguidor)
+
+            # Invalidação de cache no Redis
+            redis_client.delete(f"artfolio:perfil:{seguidor_id}")
+            redis_client.delete(f"artfolio:perfil:{seguido_id}")
+            redis_client.delete_pattern("artfolio:obras:*")
+
+            novo_total = SeguidorRepository.contar_por_usuario(db, seguido_id)
+
+            remetente = UsuarioRepository.buscar_por_id(db, seguidor_id)
+            nome_remetente = remetente.nome if remetente else "Alguém"
+            foto_remetente = getattr(remetente, "fotoPerfil", None) if remetente else None
+
+            # 1. Notificação persistente no banco de dados (sem publicar duplicado no WS)
+            notificacao = NotificacaoService.criar_notificacao(
+                db=db,
+                id_usuario=seguido_id,
+                tipo="FOLLOW",
+                titulo="Novo seguidor",
+                mensagem=f"{nome_remetente} começou a seguir você.",
+                id_remetente=seguidor_id,
+                publicar_ws=False
             )
 
-        # 4. Criar o relacionamento
-        novo_seguidor = Seguidor(
-            idSeguidor=seguidor_id,
-            idSeguido=seguido_id
-        )
-        seguidor_salvo = SeguidorRepository.criar(db, novo_seguidor)
+            # 2. Evento WebSocket em tempo real para sincronização reativa de contadores
+            payload_ws = {
+                "id": notificacao.id if notificacao else None,
+                "tipo": "SEGUIDOR",
+                "seguido_id": seguido_id,
+                "total_seguidores": novo_total,
+                "mensagem": f"{nome_remetente} começou a seguir você.",
+                "remetente": {
+                    "id": remetente.id if remetente else seguidor_id,
+                    "nome": nome_remetente,
+                    "fotoPerfil": foto_remetente
+                },
+                "naoLidasCount": NotificacaoService.contar_nao_lidas(db, seguido_id)
+            }
+            try:
+                redis_client.publish(f"notificacoes:{seguido_id}", json.dumps(payload_ws, ensure_ascii=False))
+            except Exception:
+                pass
 
-        # 5. Invalidar caches do Redis
-        redis_client.delete(f"artfolio:perfil:{seguidor_id}")
-        redis_client.delete(f"artfolio:perfil:{seguido_id}")
-        redis_client.delete_pattern("artfolio:obras:*")
+            return {
+                "status": "sucesso",
+                "seguindo": True,
+                "total_seguidores": novo_total
+            }
 
-        # 6. Disparar notificação automática para o usuário seguido
-        remetente = UsuarioRepository.buscar_por_id(db, seguidor_id)
-        nome_remetente = remetente.nome if remetente else "Alguém"
-        NotificacaoService.criar_notificacao(
-            db=db,
-            id_usuario=seguido_id,
-            tipo="FOLLOW",
-            titulo="Novo seguidor",
-            mensagem=f"{nome_remetente} começou a seguir você.",
-            id_remetente=seguidor_id
-        )
-
-        return seguidor_salvo
+    @staticmethod
+    def seguir(db: Session, seguidor_id: int, seguido_id: int):
+        """
+        Alias compatível para alternar ou registrar relacionamento de seguir.
+        """
+        return SeguidorService.alternar_seguir(db, seguidor_id, seguido_id)
 
     @staticmethod
     def deixar_de_seguir(db: Session, seguidor_id: int, seguido_id: int) -> dict:
         """
-        Remove o relacionamento de seguir entre dois usuários.
+        Remove o relacionamento de seguir entre dois usuários de maneira defensiva,
+        sem estourar 404/500 caso o vínculo já não exista.
         """
         relacao = SeguidorRepository.buscar(db, seguidor_id, seguido_id)
-        if not relacao:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Você não está seguindo este usuário."
-            )
+        if relacao:
+            SeguidorRepository.deletar(db, relacao)
 
-        SeguidorRepository.deletar(db, relacao)
-
-        # Invalidar caches do Redis
         redis_client.delete(f"artfolio:perfil:{seguidor_id}")
         redis_client.delete(f"artfolio:perfil:{seguido_id}")
         redis_client.delete_pattern("artfolio:obras:*")
 
-        return {"message": "Você deixou de seguir este usuário."}
+        novo_total = SeguidorRepository.contar_seguidores(db, seguido_id)
+
+        return {
+            "status": "sucesso",
+            "seguindo": False,
+            "total_seguidores": novo_total,
+            "message": "Você deixou de seguir este usuário."
+        }
 
     @staticmethod
     def obter_status_relacionamento(db: Session, me_id: int, target_id: int) -> RelacionamentoStatusResposta:

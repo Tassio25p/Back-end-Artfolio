@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.models.usuario_model import Usuario
 
 from app.redis_client import redis_client
+from app.core.limiter import limiter
 
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
 
@@ -49,6 +50,9 @@ def obter_usuario_atual(credentials: HTTPAuthorizationCredentials = Depends(secu
         raise excecao_credenciais
 
     return usuario
+
+# Alias padronizado para get_current_user
+get_current_user = obter_usuario_atual
 
  # endpoint de obtenção de usuario opcional
 def obter_usuario_opcional(
@@ -91,7 +95,8 @@ def cadastrar(dados: UsuarioCadastro, db: Session = Depends(get_db)):
     return UsuarioService.cadastrar(db, dados)
 
 @router.post("/login", response_model=TokenResposta)
-def logar(dados: UsuarioLogin, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def logar(request: Request, dados: UsuarioLogin, db: Session = Depends(get_db)):
     """
     Realiza o login do usuário no sistema.
     """
@@ -106,15 +111,21 @@ def logar(dados: UsuarioLogin, db: Session = Depends(get_db)):
     return UsuarioService.login(db, dados)
 
 @router.post("/google", response_model=TokenResposta, summary="Login ou Cadastro com Google")
-def login_google(dados: GoogleLoginSchema, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def login_google(request: Request, dados: GoogleLoginSchema, db: Session = Depends(get_db)):
     """
     Autentica ou cadastra um usuário automaticamente utilizando o ID token do Google.
     """
     return UsuarioService.login_google(db, dados.token)
 
 @router.get("/me", response_model=UsuarioResposta)
-def obter_me(usuario_atual: Usuario = Depends(obter_usuario_atual)):
+def obter_me(
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
     """
-    Retorna os dados do usuário atualmente logado.
+    Retorna os dados do usuário atualmente logado enriquecidos com o plano ativo.
     """
+    from app.services.plano_service import PlanoService
+    usuario_atual.plano = PlanoService.obter_tipo_plano_usuario(db, usuario_atual.id)
     return usuario_atual

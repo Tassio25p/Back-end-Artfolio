@@ -96,7 +96,35 @@ class UsuarioService:
         )
 
         # 6. Salvar no banco usando o repositório
-        return UsuarioRepository.salvar(db, novo_usuario)
+        try:
+            return UsuarioRepository.salvar(db, novo_usuario)
+        except Exception as e:
+            erro_str = str(e).lower()
+            if "chk_usuario_cpf_cnpj" in erro_str or "cpf" in erro_str:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="CPF ou CNPJ inválido."
+                )
+            if "chk_usuario_email" in erro_str:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Formato de e-mail inválido."
+                )
+            if "duplicate key" in erro_str or "unique constraint" in erro_str:
+                if "email" in erro_str:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="O e-mail informado já está cadastrado no sistema."
+                    )
+                if "cpf" in erro_str:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="O CPF/CNPJ informado já está cadastrado no sistema."
+                    )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Erro ao cadastrar usuário: {str(e)}"
+            )
 
     @staticmethod
     def login(db: Session, dados: UsuarioLogin) -> dict:
@@ -143,7 +171,11 @@ class UsuarioService:
         }
         token_acesso = criar_token_acesso(dados=token_data)
 
-        # 5. Retornar dados estruturados para o controller
+        # 5. Anexar tipo do plano ativo
+        from app.services.plano_service import PlanoService
+        usuario.plano = PlanoService.obter_tipo_plano_usuario(db, usuario.id)
+
+        # 6. Retornar dados estruturados para o controller
         return {
             "access_token": token_acesso,
             "token_type": "bearer",
@@ -212,6 +244,9 @@ class UsuarioService:
         }
         token_acesso = criar_token_acesso(dados=token_data)
 
+        from app.services.plano_service import PlanoService
+        usuario.plano = PlanoService.obter_tipo_plano_usuario(db, usuario.id)
+
         return {
             "access_token": token_acesso,
             "token_type": "bearer",
@@ -248,8 +283,20 @@ class UsuarioService:
         # 2. Extrair apenas os campos que foram enviados na requisição
         campos_atualizados = dados.model_dump(exclude_unset=True)
 
+        # Validação de permissão para mensagem_cta (apenas se for string preenchida)
+        if "mensagem_cta" in campos_atualizados and campos_atualizados.get("mensagem_cta"):
+            from app.services.plano_service import PlanoService
+            plano_tipo = PlanoService.obter_tipo_plano_usuario(db, usuario_id)
+            if plano_tipo == "Free":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="A personalização da mensagem modelo de orçamento (CTA) é exclusiva para assinantes Pro e Boost."
+                )
+
         # 3. Se nenhum campo foi enviado, retornar o usuário sem alterações
         if not campos_atualizados:
+            from app.services.plano_service import PlanoService
+            usuario.plano = PlanoService.obter_tipo_plano_usuario(db, usuario_id)
             return usuario
 
         # 4. Aplicar cada campo informado ao objeto SQLAlchemy
@@ -263,7 +310,61 @@ class UsuarioService:
         redis_client.delete(f"artfolio:perfil:{usuario_id}")
         redis_client.delete_pattern("artfolio:obras:*")
 
+        from app.services.plano_service import PlanoService
+        usuario_atualizado.plano = PlanoService.obter_tipo_plano_usuario(db, usuario_id)
+
         return usuario_atualizado
+
+    @staticmethod
+    def obter_estatisticas_gerais(db: Session) -> dict:
+        """
+        Retorna as contagens reais do sistema para a Landing Page (Artistas, Obras e Categorias).
+        """
+        from app.models.postagem_model import Postagem
+        from app.models.categoria_model import Categoria
+        total_usuarios = db.query(Usuario).filter(Usuario.deletado == False).count()
+        total_obras = db.query(Postagem).filter(Postagem.deletado == False).count()
+        total_categorias = db.query(Categoria).filter(Categoria.deletado == False).count()
+        return {
+            "total_artistas": total_usuarios,
+            "total_obras": total_obras,
+            "total_categorias": total_categorias
+        }
+
+    @staticmethod
+    def obter_preferencias(db: Session, usuario_id: int) -> List[dict]:
+        """
+        Retorna as categorias/tópicos favoritos do usuário logado.
+        """
+        from app.models.preferencia_usuario_model import PreferenciaUsuario
+        prefs = db.query(PreferenciaUsuario).filter(PreferenciaUsuario.idUsuario == usuario_id).all()
+        resultado = []
+        for p in prefs:
+            cat_nome = p.categoria.nomeCategoria if p.categoria else ""
+            resultado.append({
+                "idCategoria": p.idCategoria,
+                "nomeCategoria": cat_nome
+            })
+        return resultado
+
+    @staticmethod
+    def salvar_preferencias(db: Session, usuario_id: int, ids_categorias: List[int]) -> List[dict]:
+        """
+        Salva até 5 categorias de interesse para a personalização do feed (bolha).
+        """
+        from app.models.preferencia_usuario_model import PreferenciaUsuario
+        ids_validos = list(dict.fromkeys([int(cid) for cid in ids_categorias if cid]))[:5]
+
+        # Limpar preferências anteriores do usuário
+        db.query(PreferenciaUsuario).filter(PreferenciaUsuario.idUsuario == usuario_id).delete()
+
+        # Inserir as novas preferências
+        novas = [PreferenciaUsuario(idUsuario=usuario_id, idCategoria=cid) for cid in ids_validos]
+        if novas:
+            db.add_all(novas)
+        db.commit()
+
+        return UsuarioService.obter_preferencias(db, usuario_id)
 
     @staticmethod
     def alterar_senha(db: Session, usuario_id: int, dados: UsuarioSenhaSchema) -> dict:
@@ -416,6 +517,9 @@ class UsuarioService:
                 seguindoCount=seguindo_cnt
             )
 
+        from app.services.plano_service import PlanoService
+        plano_tipo = PlanoService.obter_tipo_plano_usuario(db, target_id)
+
         return PerfilPublicoResposta(
             id=usuario.id,
             nome=usuario.nome,
@@ -427,7 +531,14 @@ class UsuarioService:
             instagram=usuario.instagram,
             behance=usuario.behance,
             website=usuario.website,
+            trajetoria=usuario.trajetoria,
+            especializacoes=usuario.especializacoes,
+            certificados=usuario.certificados,
             tipo_conta=usuario.tipo_conta,
+            tipo_usuario=usuario.tipo_usuario,
+            mostrar_moldura_led=getattr(usuario, "mostrar_moldura_led", True),
+            mensagem_cta=getattr(usuario, "mensagem_cta", None),
+            plano=plano_tipo,
             dataCriacao=usuario.dataCriacao,
             seguidoresCount=seguidores_cnt,
             seguindoCount=seguindo_cnt,
@@ -448,6 +559,61 @@ class UsuarioService:
             resultado.append(perfil)
         return resultado
 
+    @staticmethod
+    def buscar_usuarios_para_chat(db: Session, termo: str, usuario_atual_id: int) -> List[dict]:
+        """
+        Busca rápida de usuários pelo nome para iniciar conversa no chat.
+        """
+        from app.services.plano_service import PlanoService
+        if not termo or len(termo.strip()) == 0:
+            return []
+        
+        termo_limpo = f"%{termo.strip()}%"
+        usuarios = (
+            db.query(Usuario)
+            .filter(
+                Usuario.deletado == False,
+                Usuario.id != usuario_atual_id,
+                Usuario.nome.ilike(termo_limpo)
+            )
+            .limit(10)
+            .all()
+        )
 
+        resultado = []
+        for u in usuarios:
+            plano_tipo = PlanoService.obter_tipo_plano_usuario(db, u.id)
+            te_segue = SeguidorRepository.buscar(db, u.id, usuario_atual_id) is not None
+            resultado.append({
+                "id": u.id,
+                "nome": u.nome,
+                "fotoPerfil": u.fotoPerfil,
+                "tipo_conta": u.tipo_conta,
+                "plano": plano_tipo,
+                "mostrar_moldura_led": getattr(u, "mostrar_moldura_led", True),
+                "te_segue": te_segue,
+                "segue_voce": te_segue,
+                "is_seguidor": te_segue
+            })
+        return resultado
 
+    @staticmethod
+    def alternar_seguir(db: Session, seguidor_id: int, seguido_id: int) -> dict:
+        """
+        Delega a alternância de seguidor para o SeguidorService.
+        """
+        return SeguidorService.alternar_seguir(db, seguidor_id, seguido_id)
 
+    @staticmethod
+    def seguir(db: Session, seguidor_id: int, seguido_id: int) -> dict:
+        """
+        Delega para o SeguidorService.alternar_seguir.
+        """
+        return SeguidorService.alternar_seguir(db, seguidor_id, seguido_id)
+
+    @staticmethod
+    def deixar_de_seguir(db: Session, seguidor_id: int, seguido_id: int) -> dict:
+        """
+        Delega para o SeguidorService.deixar_de_seguir.
+        """
+        return SeguidorService.deixar_de_seguir(db, seguidor_id, seguido_id)

@@ -39,6 +39,22 @@ def listar_artistas(
     return UsuarioService.listar_artistas(db, busca=busca)
 
 
+@router.get(
+    "/buscar",
+    status_code=status.HTTP_200_OK,
+    summary="Buscar usuários pelo nome para chat"
+)
+def buscar_usuarios_chat(
+    q: str = Query(..., min_length=1, description="Nome do usuário a pesquisar"),
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Pesquisa usuários pelo nome para iniciar conversa no chat.
+    """
+    return UsuarioService.buscar_usuarios_para_chat(db, q, usuario_atual.id)
+
+
 @router.put(
     "/me",
     response_model=UsuarioResposta,
@@ -126,9 +142,8 @@ def alterar_senha(
 
 @router.post(
     "/{id}/seguir",
-    response_model=SeguidorResposta,
-    status_code=status.HTTP_201_CREATED,
-    summary="Seguir um usuário / artista"
+    status_code=status.HTTP_200_OK,
+    summary="Seguir ou alternar seguir um usuário / artista"
 )
 def seguir_usuario(
     id: int,
@@ -136,9 +151,10 @@ def seguir_usuario(
     db: Session = Depends(get_db)
 ):
     """
-    Registra que o usuário autenticado passou a seguir o usuário com ID {id}.
+    Registra ou alterna o relacionamento de seguir entre o usuário autenticado e o usuário com ID {id}.
+    Retorna status de sucesso, se está seguindo e o total atualizado de seguidores.
     """
-    return SeguidorService.seguir(db, usuario_atual.id, id)
+    return SeguidorService.alternar_seguir(db, usuario_atual.id, id)
 
 
 @router.delete(
@@ -225,3 +241,72 @@ def listar_seguindo(
     Retorna a lista de usuários seguidos pelo perfil {id}.
     """
     return SeguidorService.listar_seguindo(db, target_id=id, me_id=usuario_atual.id)
+
+
+@router.get(
+    "/{id}/estatisticas-painel",
+    status_code=status.HTTP_200_OK,
+    summary="Obter painel de estatísticas analíticas do usuário"
+)
+def obter_estatisticas_painel_usuario(
+    id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna métricas consolidadas e pódio de engajamento do usuário.
+    """
+    from app.services.estatistica_service import EstatisticaService
+    return EstatisticaService.obter_painel_artista(db, id)
+
+
+# --- Preferências de Tópicos / Categorias do Usuário ---
+from pydantic import BaseModel
+
+class PreferenciasPayload(BaseModel):
+    idCategorias: List[int]
+
+@router.get(
+    "/me/preferencias",
+    status_code=status.HTTP_200_OK,
+    summary="Obter tópicos de interesse favoritos do usuário logado"
+)
+def obter_minhas_preferencias(
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna as categorias de interesse favoritadas pelo usuário logado.
+    """
+    return UsuarioService.obter_preferencias(db, usuario_atual.id)
+
+
+@router.put(
+    "/me/preferencias",
+    status_code=status.HTTP_200_OK,
+    summary="Salvar até 5 tópicos de interesse favoritos do usuário logado"
+)
+def salvar_minhas_preferencias(
+    payload: PreferenciasPayload,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Salva até 5 categorias de interesse para personalizar o feed (bolha).
+    """
+    return UsuarioService.salvar_preferencias(db, usuario_atual.id, payload.idCategorias)
+
+
+# --- Estatísticas Gerais da Plataforma (Landing Page Pública) ---
+@router.get(
+    "/estatisticas/gerais",
+    status_code=status.HTTP_200_OK,
+    summary="Obter contagens reais de artistas e obras para a Landing Page"
+)
+def obter_estatisticas_gerais(
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint público que retorna contagens reais do PostgreSQL para a tela inicial.
+    """
+    return UsuarioService.obter_estatisticas_gerais(db)
+

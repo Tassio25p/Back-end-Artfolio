@@ -109,5 +109,19 @@ class SafeRedisClient:
             logger.error(f"Erro ao incrementar chave no Redis ({chave}): {e}")
             return 0
 
+    def publish(self, canal: str, mensagem: str) -> bool: 
+        """
+        Publica uma mensagem em um canal do Redis (Pub/Sub) para distribuição em tempo real.
+        Retorna True em caso de sucesso ou False se o Redis estiver indisponível.
+        """
+        if not self.client:
+            return False
+        try:
+            self.client.publish(canal, mensagem)
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao publicar no Redis no canal ({canal}): {e}")
+            return False
+
 # Instanciação global para uso em toda a aplicação
 redis_client = SafeRedisClient()

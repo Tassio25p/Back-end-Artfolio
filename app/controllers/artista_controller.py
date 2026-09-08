@@ -41,13 +41,22 @@ def obter_artista_por_id(id: int, db: Session = Depends(get_db)):
     """
     return ArtistaService.buscar_artista_por_id(db, id)
 
+@router.get("/artistas/{id}/estatisticas-painel", status_code=status.HTTP_200_OK, summary="Obter painel de estatísticas e pódio de categorias do artista")
+def obter_estatisticas_artista(id: int, db: Session = Depends(get_db)):
+    """
+    Retorna métricas consolidadas, contadores e pódio de categorias de maior engajamento.
+    Disponível para contas Pro e Boost (com modo de demonstração para Free).
+    """
+    from app.services.estatistica_service import EstatisticaService
+    return EstatisticaService.obter_painel_artista(db, id)
+
 # endpoint de seguir artista
-@router.post("/artistas/{id}/seguir", status_code=status.HTTP_201_CREATED, summary="Seguir artista")
+@router.post("/artistas/{id}/seguir", status_code=status.HTTP_200_OK, summary="Seguir ou alternar seguir artista")
 def seguir_artista(id: int, usuario_atual: Usuario = Depends(obter_usuario_atual), db: Session = Depends(get_db)):
     """
-    Permite seguir um artista por sua rota /artistas/{id}/seguir.
+    Permite seguir ou alternar seguir um artista por sua rota /artistas/{id}/seguir.
     """
-    return SeguidorService.seguir(db, usuario_atual.id, id)
+    return SeguidorService.alternar_seguir(db, usuario_atual.id, id)
 
 # endpoint de deixar de seguir artista
 @router.delete("/artistas/{id}/seguir", status_code=status.HTTP_200_OK, summary="Deixar de seguir artista")

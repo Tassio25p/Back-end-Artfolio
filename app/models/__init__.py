@@ -7,11 +7,13 @@ from app.models.comentario_model import Comentario
 from app.models.seguidor_model import Seguidor
 from app.models.obra_salva_model import ObraSalva
 from app.models.denuncia_model import Denuncia
+from app.models.denuncia_chat_model import DenunciaChat
 from app.models.notificacao_model import Notificacao
 from app.models.conversa_model import Conversa
 from app.models.conversa_usuario_model import ConversaUsuario
 from app.models.mensagem_model import Mensagem
 from app.models.postagem_visualizacao_model import PostagemVisualizacao
+from app.models.log_auditoria_model import LogAuditoria
 
 __all__ = [
     "Usuario",
@@ -23,9 +25,12 @@ __all__ = [
     "Seguidor",
     "ObraSalva",
     "Denuncia",
+    "DenunciaChat",
     "Notificacao",
     "Conversa",
     "ConversaUsuario",
     "Mensagem",
-    "PostagemVisualizacao"
+    "PostagemVisualizacao",
+    "LogAuditoria"
 ]
+

@@ -19,7 +19,15 @@ class PostagemUsuarioResumidoResposta(BaseModel):
     nome: str
     email: Optional[str] = None
     fotoPerfil: Optional[str] = Field(None, alias="fotoPerfil")
+    foto_perfil: Optional[str] = None
     tipo_conta: str = "artista"
+    tipo_usuario: str = "artista"
+    plano: Optional[str] = "Free"
+    mostrar_moldura_led: bool = True
+    total_seguidores: int = 0
+    seguidores: int = 0
+    usuario_seguindo: bool = False
+    seguindo_usuario: bool = False
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -31,18 +39,30 @@ class PostagemResposta(BaseModel):
     idUsuario: int = Field(..., alias="idUsuario")
     idCategoria: Optional[int] = Field(None, alias="idCategoria")
     legenda: Optional[str] = None
+    titulo: Optional[str] = None
+    descricao: Optional[str] = None
     arquivoUrl: str = Field(..., alias="arquivoUrl")
+    imagem_url: Optional[str] = None
+    arquivos: List[str] = []
     dataPostagem: Optional[datetime] = Field(None, alias="dataPostagem")
+    data_criacao: Optional[datetime] = None
     visualizacoes: int = 0
+    total_visualizacoes: int = 0
     deletado: bool = False
     usuario: Optional[PostagemUsuarioResumidoResposta] = None
+    autor: Optional[PostagemUsuarioResumidoResposta] = None
     categoria: Optional[CategoriaResposta] = None
     categorias: List[CategoriaResposta] = []
     totalCurtidas: int = 0
+    total_curtidas: int = 0
     totalComentarios: int = 0
+    total_comentarios: int = 0
     totalSalvos: int = 0
+    total_salvos: int = 0
     curtido_por_mim: bool = False
+    usuario_curtiu: bool = False
     salvo_por_mim: bool = False
+    usuario_salvou: bool = False
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -50,12 +70,14 @@ class PostagemCriar(BaseModel):
     """
     Schema para receber os dados de criação de uma nova Postagem.
     Suporta uma categoria (idCategoria) ou múltiplas (idCategorias ou nomesCategorias).
+    Suporta postagem simples (1 imagem) ou carrossel de imagens (arquivos).
     """
     idCategoria: Optional[int] = Field(None, description="ID da categoria principal")
     idCategorias: Optional[List[int]] = Field(None, description="Lista de IDs de categorias da obra")
     nomesCategorias: Optional[List[str]] = Field(None, description="Lista de nomes de categorias caso enviadas pelo nome")
     legenda: Optional[str] = Field(None, description="Legenda ou descrição da obra")
     arquivoUrl: str = Field(..., min_length=1, description="URL do arquivo da obra")
+    arquivos: Optional[List[str]] = Field(None, description="Lista de URLs de imagens para carrossel (Pro e Boost)")
 
 class PostagemAtualizar(BaseModel):
     """
@@ -65,6 +87,7 @@ class PostagemAtualizar(BaseModel):
     idCategorias: Optional[List[int]] = Field(None, description="Nova lista de IDs de categorias")
     legenda: Optional[str] = Field(None, description="Nova legenda ou descrição")
     arquivoUrl: Optional[str] = Field(None, description="Nova URL do arquivo da obra")
+    arquivos: Optional[List[str]] = Field(None, description="Nova lista de URLs de imagens")
 
 
 # --- Schemas do Feed ---
@@ -77,6 +100,8 @@ class FeedUsuarioResposta(BaseModel):
     nome: str
     fotoPerfil: Optional[str] = Field(None, alias="fotoPerfil")
     tipo_conta: str = "artista"
+    plano: str = "Free"
+    mostrar_moldura_led: bool = True
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -87,6 +112,7 @@ class FeedItemResposta(BaseModel):
     id: int
     legenda: Optional[str] = None
     arquivoUrl: str = Field(..., alias="arquivoUrl")
+    arquivos: List[str] = []
     dataPostagem: Optional[datetime] = Field(None, alias="dataPostagem")
     usuario: FeedUsuarioResposta
     categoria: Optional[CategoriaResposta] = None
@@ -98,6 +124,9 @@ class FeedItemResposta(BaseModel):
     curtido_por_mim: bool = False
     seguindo_usuario: bool = False
     salvo_por_mim: bool = False
+    destaque_boost: bool = False
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
