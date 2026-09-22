@@ -30,8 +30,10 @@ class MeuPlanoResposta(BaseModel):
     mostrar_moldura_led: bool = True
     mensagem_cta: Optional[str] = None
     limiteArquivosPorPost: int = 1
+    limite_mb: int = 10
     permiteCarrossel: bool = False
     permiteAnalytics: bool = False
+    permiteMensagemCta: bool = False
     permiteDestaqueFeed: bool = False
     assinatura: Optional[AssinaturaResposta] = None
 

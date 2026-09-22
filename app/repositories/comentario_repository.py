@@ -1,5 +1,5 @@
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models.comentario_model import Comentario
@@ -47,7 +47,7 @@ class ComentarioRepository:
         Realiza o soft delete de um comentário, seguindo o padrão do projeto.
         """
         comentario.deletado = True
-        comentario.dataDelecao = datetime.utcnow()
+        comentario.dataDelecao = datetime.now(timezone.utc)
         db.commit()
 
     @staticmethod

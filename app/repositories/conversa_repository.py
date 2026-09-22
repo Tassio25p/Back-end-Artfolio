@@ -1,6 +1,6 @@
 from typing import Optional, List
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, select
 from app.models.conversa_model import Conversa
 from app.models.conversa_usuario_model import ConversaUsuario
 
@@ -28,11 +28,10 @@ class ConversaRepository:
         Verifica se já existe uma conversa ativa vinculando exatamente os dois usuários informados.
         """
         subq = (
-            db.query(ConversaUsuario.idConversa)
-            .filter(ConversaUsuario.idUsuario.in_([usuario_1_id, usuario_2_id]))
+            select(ConversaUsuario.idConversa)
+            .where(ConversaUsuario.idUsuario.in_([usuario_1_id, usuario_2_id]))
             .group_by(ConversaUsuario.idConversa)
             .having(func.count(ConversaUsuario.idUsuario.distinct()) == 2)
-            .subquery()
         )
         return db.query(Conversa).filter(
             Conversa.id.in_(subq),

@@ -3,13 +3,25 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
+
 from app.database import get_db
-from app.schemas.usuario_schema import UsuarioCadastro, UsuarioLogin, UsuarioResposta, TokenResposta, GoogleLoginSchema
+from app.schemas.usuario_schema import (
+    UsuarioCadastro,
+    UsuarioLogin,
+    UsuarioResposta,
+    TokenResposta,
+    GoogleLoginSchema,
+    TokenRefreshRequisicao,
+    TokenRefreshResposta,
+    VerificarEmailSchema,
+    ReenviarCodigoSchema,
+    RedefinirSenhaSchema,
+    RegistroResposta,
+)
 from app.services.usuario_service import UsuarioService
 from app.repositories.usuario_repository import UsuarioRepository
 from app.core.config import settings
 from app.models.usuario_model import Usuario
-
 from app.redis_client import redis_client
 from app.core.limiter import limiter
 
@@ -18,8 +30,12 @@ router = APIRouter(prefix="/auth", tags=["Autenticação"])
 # Esquema HTTPBearer: exibe apenas o campo de Token no Swagger UI
 security = HTTPBearer()
 security_opcional = HTTPBearer(auto_error=False)
-# endpoint de obtenção de usuario atual
-def obter_usuario_atual(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)) -> Usuario:
+
+
+def obter_usuario_atual(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+) -> Usuario:
     """
     Injeta o usuário atualmente autenticado nas rotas privadas.
 
@@ -32,16 +48,17 @@ def obter_usuario_atual(credentials: HTTPAuthorizationCredentials = Depends(secu
         detail="Credenciais inválidas ou token expirado.",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    try: # esse try execpt faz a validação do token, verificando se ele é válido e se o usuário existe no banco de dados
+    try:
         payload = jwt.decode(
             token, 
             settings.JWT_SECRET_KEY, 
             algorithms=[settings.JWT_ALGORITHM]
         )
-        usuario_id_str: str = payload.get("sub")
-        if usuario_id_str is None:
+        # Correção linha 49: payload.get pode ser None, aceitamos Optional[str]
+        usuario_id_raw: Optional[str] = payload.get("sub")    
+        if not usuario_id_raw:
             raise excecao_credenciais
-        usuario_id = int(usuario_id_str)
+        usuario_id = int(usuario_id_raw)
     except (JWTError, ValueError):
         raise excecao_credenciais
 
@@ -51,10 +68,11 @@ def obter_usuario_atual(credentials: HTTPAuthorizationCredentials = Depends(secu
 
     return usuario
 
+
 # Alias padronizado para get_current_user
 get_current_user = obter_usuario_atual
 
- # endpoint de obtenção de usuario opcional
+
 def obter_usuario_opcional(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_opcional),
     db: Session = Depends(get_db)
@@ -65,24 +83,111 @@ def obter_usuario_opcional(
     """
     if not credentials or not credentials.credentials:
         return None
-    try: # esse try execpt faz a validação do token verificando se ele é válido e se o usuário existe no banco de dados
+    try:
         token = credentials.credentials
         payload = jwt.decode(
             token, 
             settings.JWT_SECRET_KEY, 
             algorithms=[settings.JWT_ALGORITHM]
         )
-        usuario_id_str: str = payload.get("sub")
-        if usuario_id_str:
-            return UsuarioRepository.buscar_por_id(db, int(usuario_id_str))
+        # Correção linha 83: tipagem segura para valor opcional
+        usuario_id_raw: Optional[str] = payload.get("sub")
+        if usuario_id_raw:
+            return UsuarioRepository.buscar_por_id(db, int(usuario_id_raw))
     except Exception:
         return None
     return None
- # esse endpoint e pra cadastrar usuario
+
+
+@router.post(
+    "/registar",
+    response_model=RegistroResposta,
+    status_code=status.HTTP_201_CREATED,
+    summary="Registar novo utilizador e enviar código OTP de verificação via Brevo"
+)
+def registar(dados: UsuarioCadastro, db: Session = Depends(get_db)):
+    """
+    Recebe os dados de registo, verifica se o e-mail já existe, gera um código OTP de 6 dígitos,
+    guarda o utilizador com is_verified = False, dispara o envio do e-mail via Brevo e retorna mensagem de sucesso.
+    """
+    chave_limit = f"artfolio:ratelimit:cadastro:{dados.email.lower()}"
+    tentativas = redis_client.incr(chave_limit, expira_segundos=60)
+    if tentativas > 10:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Muitas tentativas de registo. Por favor, aguarde 1 minuto antes de tentar novamente."
+        )
+
+    usuario_criado = UsuarioService.cadastrar(db, dados)
+    return {
+        "mensagem": "Utilizador registado com sucesso! Enviamos um código de verificação de 6 dígitos para o seu e-mail.",
+        "email": usuario_criado.email or dados.email,
+        "is_verified": False
+    }
+
+
+@router.post(
+    "/verificar-email",
+    status_code=status.HTTP_200_OK,
+    summary="Verificar e-mail com código OTP de 6 dígitos"
+)
+@limiter.limit("10/minute")
+def verificar_email(request: Request, dados: VerificarEmailSchema, db: Session = Depends(get_db)):
+    """
+    Recebe o e-mail e o código OTP, valida se corresponde ao gravado no banco de dados,
+    atualiza is_verified = True e limpa o código temporário.
+    """
+    return UsuarioService.verificar_email(db, dados.email, dados.codigo)
+
+
+@router.post(
+    "/reenviar-codigo",
+    status_code=status.HTTP_200_OK,
+    summary="Reenviar código de verificação OTP por e-mail"
+)
+@limiter.limit("5/minute")
+def reenviar_codigo(request: Request, dados: ReenviarCodigoSchema, db: Session = Depends(get_db)):
+    """
+    Gera um novo código OTP de 6 dígitos e reenvia para o e-mail do utilizador via Brevo.
+    """
+    return UsuarioService.reenviar_codigo(db, dados.email)
+
+
+@router.post(
+    "/esqueci-senha",
+    status_code=status.HTTP_200_OK,
+    summary="Solicitar código OTP para recuperação de senha"
+)
+@limiter.limit("5/minute")
+def esqueci_senha(request: Request, dados: ReenviarCodigoSchema, db: Session = Depends(get_db)):
+    """
+    Gera um novo código OTP de 6 dígitos para recuperação de senha e envia para o e-mail via Brevo.
+    """
+    return UsuarioService.solicitar_recuperacao_senha(db, dados.email)
+
+
+@router.post(
+    "/atualizar-senha",
+    status_code=status.HTTP_200_OK,
+    summary="Atualizar/redefinir senha com código OTP validado"
+)
+@router.post(
+    "/redefinir-senha",
+    status_code=status.HTTP_200_OK,
+    summary="Alias para redefinir senha com código OTP"
+)
+@limiter.limit("5/minute")
+def atualizar_senha(request: Request, dados: RedefinirSenhaSchema, db: Session = Depends(get_db)):
+    """
+    Recebe e-mail, código OTP e nova senha, valida a chave e atualiza as credenciais do utilizador.
+    """
+    return UsuarioService.redefinir_senha(db, dados.email, dados.codigo, dados.nova_senha)
+
+
 @router.post("/cadastro", response_model=UsuarioResposta, status_code=status.HTTP_201_CREATED)
 def cadastrar(dados: UsuarioCadastro, db: Session = Depends(get_db)):
     """
-    Cria um novo usuário real no banco de dados.
+    Cria um novo usuário real no banco de dados (rota compatível com versões existentes do frontend).
     """
     chave_limit = f"artfolio:ratelimit:cadastro:{dados.email.lower()}"
     tentativas = redis_client.incr(chave_limit, expira_segundos=60)
@@ -93,6 +198,7 @@ def cadastrar(dados: UsuarioCadastro, db: Session = Depends(get_db)):
         )
 
     return UsuarioService.cadastrar(db, dados)
+
 
 @router.post("/login", response_model=TokenResposta)
 @limiter.limit("5/minute")
@@ -110,6 +216,7 @@ def logar(request: Request, dados: UsuarioLogin, db: Session = Depends(get_db)):
 
     return UsuarioService.login(db, dados)
 
+
 @router.post("/google", response_model=TokenResposta, summary="Login ou Cadastro com Google")
 @limiter.limit("5/minute")
 def login_google(request: Request, dados: GoogleLoginSchema, db: Session = Depends(get_db)):
@@ -117,6 +224,16 @@ def login_google(request: Request, dados: GoogleLoginSchema, db: Session = Depen
     Autentica ou cadastra um usuário automaticamente utilizando o ID token do Google.
     """
     return UsuarioService.login_google(db, dados.token)
+
+
+@router.post("/refresh", response_model=TokenRefreshResposta, summary="Renovação de Sessão (Refresh Token)")
+@limiter.limit("20/minute")
+def renovar_token(request: Request, dados: TokenRefreshRequisicao, db: Session = Depends(get_db)):
+    """
+    Renova o token de acesso de curta duração utilizando o Refresh Token assinado (7 dias).
+    """
+    return UsuarioService.renovar_token(db, dados.refresh_token)
+
 
 @router.get("/me", response_model=UsuarioResposta)
 def obter_me(

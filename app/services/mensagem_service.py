@@ -426,12 +426,12 @@ class MensagemService:
 
         # Validação da janela de 15 minutos
         if mensagem.dataEnvio:
-            agora_utc = datetime.utcnow()
+            agora_utc = datetime.now(timezone.utc)
             envio_time = mensagem.dataEnvio
             if envio_time.tzinfo is not None:
                 diferenca = (datetime.now(timezone.utc) - envio_time).total_seconds()
             else:
-                diferenca = (agora_utc - envio_time).total_seconds()
+                diferenca = (agora_utc.replace(tzinfo=None) - envio_time).total_seconds()
 
             if diferenca > 15 * 60:
                 raise HTTPException(
@@ -439,7 +439,7 @@ class MensagemService:
                     detail="A mensagem só pode ser editada em até 15 minutos após o envio."
                 )
 
-        agora = datetime.utcnow()
+        agora = datetime.now(timezone.utc)
         mensagem.conteudo = dados.conteudo
         mensagem.editado_em = agora
         db.commit()
@@ -491,7 +491,7 @@ class MensagemService:
     async def soft_delete_mensagem(db: Session, usuario_id: int, mensagem_id: int) -> dict:
         """
         Aplica Soft Delete na mensagem sem remover a linha do banco.
-        Seta deletado_em = datetime.utcnow() e deletado_por_id = usuario_atual.id.
+        Seta deletado_em = datetime.now(timezone.utc) e deletado_por_id = usuario_atual.id.
         Emite evento via WebSocket: { "tipo": "MENSAGEM_EXCLUIDA", "conversa_id": ..., "mensagem_id": ... }
         """
         mensagem = db.query(Mensagem).filter(Mensagem.id == mensagem_id).first()
@@ -508,7 +508,7 @@ class MensagemService:
                     detail="Você não tem permissão para excluir esta mensagem."
                 )
 
-        agora = datetime.utcnow()
+        agora = datetime.now(timezone.utc)
         mensagem.deletado_em = agora
         mensagem.deletado_por_id = usuario_id
         db.commit()

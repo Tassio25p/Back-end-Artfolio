@@ -1,3 +1,5 @@
+from app.models.postagem_model import Postagem
+from app.models.usuario_model import Usuario
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import String, Text, DateTime, ForeignKey, func, UniqueConstraint
@@ -25,8 +27,8 @@ class Denuncia(Base):
         UniqueConstraint("idusuario", "idpostagem", name="uq_denuncia_usuario_postagem"),
     )
 
-    usuario: Mapped["Usuario"] = relationship("Usuario", lazy="joined")
-    postagem: Mapped["Postagem"] = relationship("Postagem", lazy="joined")
+    usuario: Mapped[Usuario] = relationship(Usuario, lazy="joined")
+    postagem: Mapped[Postagem] = relationship(Postagem, lazy="joined")
 
     def __repr__(self) -> str:
         return f"<Denuncia(id={self.id}, idUsuario={self.idUsuario}, idPostagem={self.idPostagem}, motivo='{self.motivo}')>"

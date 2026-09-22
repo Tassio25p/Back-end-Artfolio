@@ -1,6 +1,7 @@
 import json
 import os
 import uuid
+import logging
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 from app.models.usuario_model import Usuario
@@ -10,12 +11,24 @@ from app.repositories.usuario_repository import UsuarioRepository
 from app.repositories.seguidor_repository import SeguidorRepository
 from app.repositories.postagem_repository import PostagemRepository
 from app.services.seguidor_service import SeguidorService
-from app.core.security import criptografar_senha, verificar_senha, criar_token_acesso
+from app.core.security import (
+    criptografar_senha,
+    verificar_senha,
+    criar_token_acesso,
+    criar_token_refresh,
+    validar_token_jwt,
+    gerar_hash_busca_cpf,
+    criptografar_dado,
+    descriptografar_dado,
+)
 from app.core.config import settings
 from app.services.media_service import MediaService
+from app.services.email_service import gerar_codigo_otp, enviar_email_otp
 from app.redis_client import redis_client
-
+from typing import List, Optional, Dict, Any
+from datetime import datetime, timezone
 # Tipos MIME permitidos para foto de perfil
+
 MIME_TYPES_PERMITIDOS = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -24,6 +37,8 @@ MIME_TYPES_PERMITIDOS = {
 
 # Tamanho máximo da foto de perfil: 5 MB
 TAMANHO_MAXIMO_FOTO = 5 * 1024 * 1024
+
+logger = logging.getLogger(__name__)
 
 class UsuarioService:
     """
@@ -39,7 +54,7 @@ class UsuarioService:
         Cadastra um novo usuário no banco de dados.
 
         Valida se o e-mail, CPF e nome de usuário já estão em uso (incluindo deletados),
-        criptografa a senha e persiste o novo usuário no PostgreSQL.
+        criptografa a senha e persiste o novo usuário no PostgreSQL com proteção de dados.
         """
         # 1. Verificar se o e-mail já existe (incluindo deletados)
         usuario_existente_email = UsuarioRepository.buscar_por_email_geral(db, dados.email)
@@ -83,33 +98,45 @@ class UsuarioService:
         # 4. Criptografar a senha do usuário
         senha_criptografada = criptografar_senha(dados.senha)
 
-        # 5. Criar objeto do modelo SQLAlchemy
+        # 5. Criptografar CPF/CNPJ e gerar Hash Cego para busca determinística
+        cpf_limpo = "".join(filter(str.isdigit, dados.cpf)) if dados.cpf else None
+        cpf_hash = gerar_hash_busca_cpf(cpf_limpo) if cpf_limpo else None
+        cpf_cifrado = criptografar_dado(cpf_limpo) if cpf_limpo else None
+
+        # 6. Gerar código OTP de 6 dígitos para verificação de e-mail via Brevo
+        codigo_otp = gerar_codigo_otp(6)
+
+        # 7. Criar objeto do modelo SQLAlchemy
         novo_usuario = Usuario(
             nome=dados.nome,
             email=dados.email,
             senha=senha_criptografada,  # Salva a senha hashada no campo 'senha'
-            cpf=dados.cpf,
+            cpf_cnpj=cpf_cifrado,
+            cpf_hash=cpf_hash,
             telefone=dados.telefone,
             biografia=dados.biografia,
             portfolio=dados.portfolio,
-            tipo_conta=dados.tipo_conta
+            tipo_conta=dados.tipo_conta,
+            codigo_verificacao=codigo_otp,
+            is_verified=False
         )
 
-        # 6. Salvar no banco usando o repositório
+        # 8. Salvar no banco usando o repositório
         try:
-            return UsuarioRepository.salvar(db, novo_usuario)
+            u_salvo = UsuarioRepository.salvar(db, novo_usuario)
+            u_salvo.plano = "Free"
+
+            # 9. Disparar e-mail transacional com código OTP via Brevo
+            if dados.email:
+                enviar_email_otp(
+                    destinatario_email=dados.email,
+                    destinatario_nome=dados.nome,
+                    codigo_otp=codigo_otp
+                )
+
+            return u_salvo
         except Exception as e:
             erro_str = str(e).lower()
-            if "chk_usuario_cpf_cnpj" in erro_str or "cpf" in erro_str:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="CPF ou CNPJ inválido."
-                )
-            if "chk_usuario_email" in erro_str:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Formato de e-mail inválido."
-                )
             if "duplicate key" in erro_str or "unique constraint" in erro_str:
                 if "email" in erro_str:
                     raise HTTPException(
@@ -121,10 +148,192 @@ class UsuarioService:
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="O CPF/CNPJ informado já está cadastrado no sistema."
                     )
+                if "nome" in erro_str:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="O nome informado já está cadastrado no sistema."
+                    )
+            if "chk_usuario_email" in erro_str:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Formato de e-mail inválido."
+                )
+            if "chk_tipo_usuario" in erro_str:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Tipo de usuário inválido (deve ser PF ou PJ)."
+                )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Erro ao cadastrar usuário: {str(e)}"
             )
+
+    @staticmethod
+    def verificar_email(db: Session, email: str, codigo: str) -> dict:
+        """
+        Valida o código OTP informado contra o código armazenado no banco de dados.
+        Atualiza is_verified para True, limpa o codigo_verificacao e invalida caches.
+        """
+        email_limpo = email.strip().lower()
+        codigo_limpo = codigo.strip()
+
+        usuario = UsuarioRepository.buscar_por_email_geral(db, email_limpo)
+        if not usuario or usuario.deletado:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Utilizador não encontrado no sistema."
+            )
+
+        if usuario.is_verified:
+            return {
+                "mensagem": "Este e-mail já foi verificado anteriormente com sucesso!",
+                "sucesso": True,
+                "email": usuario.email,
+                "is_verified": True
+            }
+
+        if not usuario.codigo_verificacao or usuario.codigo_verificacao.strip() != codigo_limpo:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Código de verificação incorreto ou expirado. Verifique os dígitos e tente novamente."
+            )
+
+        # Código válido: atualiza status de verificação e limpa o OTP
+        usuario.is_verified = True
+        usuario.codigo_verificacao = None
+        db.commit()
+        db.refresh(usuario)
+
+        # Invalidação de cache Redis do usuário
+        try:
+            redis_client.delete(f"artfolio:perfil:{usuario.id}")
+        except Exception:
+            pass
+
+        return {
+            "mensagem": "E-mail verificado com sucesso! A sua conta agora está totalmente ativa.",
+            "sucesso": True,
+            "email": usuario.email,
+            "is_verified": True
+        }
+
+    @staticmethod
+    def reenviar_codigo(db: Session, email: str) -> dict:
+        """
+        Gera um novo código OTP de 6 dígitos e reenvia para o e-mail do utilizador via Brevo.
+        """
+        email_limpo = email.strip().lower()
+        usuario = UsuarioRepository.buscar_por_email_geral(db, email_limpo)
+        if not usuario or usuario.deletado:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Utilizador não encontrado no sistema."
+            )
+
+        if usuario.is_verified:
+            return {
+                "mensagem": "Este e-mail já se encontra verificado.",
+                "sucesso": True,
+                "email": usuario.email,
+                "is_verified": True
+            }
+
+        novo_otp = gerar_codigo_otp(6)
+        usuario.codigo_verificacao = novo_otp
+        db.commit()
+        db.refresh(usuario)
+
+        destinatario = str(usuario.email or email_limpo)
+        enviado = enviar_email_otp(
+            destinatario_email=destinatario,
+            destinatario_nome=usuario.nome,
+            codigo_otp=novo_otp
+        )
+
+        return {
+            "mensagem": "Um novo código de verificação foi enviado para o seu e-mail.",
+            "sucesso": True,
+            "email": usuario.email,
+            "is_verified": False,
+            "email_enviado": enviado
+        }
+
+    @staticmethod
+    def solicitar_recuperacao_senha(db: Session, email: str) -> dict:
+        """
+        Gera um novo código OTP de 6 dígitos para recuperação de acesso e envia para o e-mail via Brevo.
+        Não bloqueia usuários já verificados, permitindo que redefinam a senha.
+        """
+        email_limpo = email.strip().lower()
+        usuario = UsuarioRepository.buscar_por_email_geral(db, email_limpo)
+        if not usuario or usuario.deletado:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Utilizador não encontrado com o e-mail informado."
+            )
+
+        novo_otp = gerar_codigo_otp(6)
+        usuario.codigo_verificacao = novo_otp
+        db.commit()
+        db.refresh(usuario)
+
+        destinatario = str(usuario.email or email_limpo)
+        enviado = enviar_email_otp(
+            destinatario_email=destinatario,
+            destinatario_nome=usuario.nome,
+            codigo_otp=novo_otp
+        )
+
+        return {
+            "mensagem": "Código de verificação enviado com sucesso para o seu e-mail.",
+            "sucesso": True,
+            "email": usuario.email,
+            "email_enviado": enviado
+        }
+
+    @staticmethod
+    def redefinir_senha(db: Session, email: str, codigo: str, nova_senha: str) -> dict:
+        """
+        Valida o código OTP e redefine a senha do usuário com hash bcrypt seguro.
+        """
+        email_limpo = email.strip().lower()
+        codigo_limpo = codigo.strip()
+
+        usuario = UsuarioRepository.buscar_por_email_geral(db, email_limpo)
+        if not usuario or usuario.deletado:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Utilizador não encontrado no sistema."
+            )
+
+        if not usuario.codigo_verificacao or usuario.codigo_verificacao.strip() != codigo_limpo:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Código de verificação incorreto ou expirado. Verifique os dígitos e tente novamente."
+            )
+
+        if len(nova_senha) < 6:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A nova palavra-passe deve conter pelo menos 6 caracteres."
+            )
+
+        usuario.senha = criptografar_senha(nova_senha)
+        usuario.codigo_verificacao = None
+        usuario.is_verified = True
+        db.commit()
+        db.refresh(usuario)
+
+        try:
+            redis_client.delete(f"artfolio:perfil:{usuario.id}")
+        except Exception:
+            pass
+
+        return {
+            "mensagem": "Palavra-passe atualizada com sucesso! Já pode iniciar sessão com as suas novas credenciais.",
+            "sucesso": True,
+            "email": usuario.email
+        }
 
     @staticmethod
     def login(db: Session, dados: UsuarioLogin) -> dict:
@@ -132,7 +341,7 @@ class UsuarioService:
         Realiza a autenticação do usuário.
 
         Verifica se o e-mail existe, se a conta está ativa e se a senha fornecida bate com o hash.
-        Se tudo estiver correto, emite um token JWT e retorna com os dados do usuário.
+        Se tudo estiver correto, emite access_token (30 min) e refresh_token (7 dias).
         """
         # 1. Buscar usuário pelo e-mail (incluindo deletados)
         usuario = UsuarioRepository.buscar_por_email_geral(db, dados.email)
@@ -163,21 +372,53 @@ class UsuarioService:
                 detail="Senha incorreta."
             )
 
-        # 4. Gerar o token JWT de acesso contendo o ID e e-mail
+        # 5. Verificar se a conta tem e-mail verificado (is_verified)
+        if not usuario.is_verified:
+            # Gerar e reenviar automaticamente um novo código OTP via Brevo para facilitar o acesso
+            try:
+                novo_otp = gerar_codigo_otp(6)
+                usuario.codigo_verificacao = novo_otp
+                db.commit()
+                db.refresh(usuario)
+
+                destinatario = str(usuario.email or dados.email)
+                enviar_email_otp(
+                    destinatario_email=destinatario,
+                    destinatario_nome=usuario.nome,
+                    codigo_otp=novo_otp
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Erro ao disparar OTP automático via Brevo no login para {usuario.email}: {e}"
+                )
+
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "detail": "E-mail não verificado",
+                    "mensagem": "A sua conta ainda não foi ativada. Enviamos um novo código de verificação para o seu e-mail.",
+                    "nao_verificado": True,
+                    "email": usuario.email or dados.email
+                }
+            )
+
+        # 6. Gerar os tokens JWT de acesso (30 min) e refresh (7 dias)
         token_data = {
             "sub": str(usuario.id),
             "email": usuario.email,
             "tipo_conta": usuario.tipo_conta
         }
         token_acesso = criar_token_acesso(dados=token_data)
+        token_refresh = criar_token_refresh(dados=token_data)
 
-        # 5. Anexar tipo do plano ativo
+        # 6. Anexar tipo do plano ativo
         from app.services.plano_service import PlanoService
         usuario.plano = PlanoService.obter_tipo_plano_usuario(db, usuario.id)
 
-        # 6. Retornar dados estruturados para o controller
+        # 7. Retornar dados estruturados para o controller
         return {
             "access_token": token_acesso,
+            "refresh_token": token_refresh,
             "token_type": "bearer",
             "usuario": usuario
         }
@@ -185,7 +426,7 @@ class UsuarioService:
     @staticmethod
     def login_google(db: Session, token: str) -> dict:
         """
-        Valida o ID token retornado pelo Google, cadastra o usuário se não existir e emite JWT.
+        Valida o ID token retornado pelo Google, cadastra o usuário se não existir e emite JWT e refresh token.
         """
         import requests
         from google.oauth2 import id_token
@@ -207,13 +448,14 @@ class UsuarioService:
             except Exception:
                 pass
 
-        if not id_info or not id_info.get("email"):
+        email_raw = id_info.get("email") if id_info else None
+        if not id_info or not email_raw:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Token do Google inválido ou expirado."
             )
 
-        email = id_info.get("email").lower()
+        email = str(email_raw).lower()
         nome = id_info.get("name") or id_info.get("given_name") or email.split("@")[0]
         foto_perfil = id_info.get("picture")
 
@@ -224,8 +466,15 @@ class UsuarioService:
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Esta conta foi desativada (deletada) e não pode ser acessada."
                 )
+            houve_alteracao = False
             if not usuario.fotoPerfil and foto_perfil:
                 usuario.fotoPerfil = foto_perfil
+                houve_alteracao = True
+            if not usuario.is_verified:
+                usuario.is_verified = True
+                usuario.codigo_verificacao = None
+                houve_alteracao = True
+            if houve_alteracao:
                 UsuarioRepository.salvar(db, usuario)
         else:
             novo_usuario = Usuario(
@@ -233,7 +482,9 @@ class UsuarioService:
                 email=email,
                 senha=None,
                 fotoPerfil=foto_perfil,
-                tipo_conta="artista"
+                tipo_conta="artista",
+                is_verified=True,
+                codigo_verificacao=None
             )
             usuario = UsuarioRepository.salvar(db, novo_usuario)
 
@@ -243,14 +494,112 @@ class UsuarioService:
             "tipo_conta": usuario.tipo_conta
         }
         token_acesso = criar_token_acesso(dados=token_data)
+        token_refresh = criar_token_refresh(dados=token_data)
 
         from app.services.plano_service import PlanoService
         usuario.plano = PlanoService.obter_tipo_plano_usuario(db, usuario.id)
 
         return {
             "access_token": token_acesso,
+            "refresh_token": token_refresh,
             "token_type": "bearer",
             "usuario": usuario
+        }
+
+    @staticmethod
+    def renovar_token(db: Session, refresh_token: str) -> dict:
+        """
+        Renova a sessão do usuário através de um refresh token válido (7 dias),
+        emitindo um novo access token (30 min) e novo refresh token (rotação).
+        """
+        try:
+            payload = validar_token_jwt(refresh_token, tipo_esperado="refresh")
+            usuario_id_str = payload.get("sub")
+            if not usuario_id_str:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Refresh token inválido."
+                )
+            usuario_id = int(usuario_id_str)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token expirado ou inválido. Faça login novamente."
+            )
+
+        usuario = UsuarioRepository.buscar_por_id(db, usuario_id)
+        if not usuario or usuario.deletado or not usuario.ativo:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Usuário desativado ou não encontrado."
+            )
+
+        token_data = {
+            "sub": str(usuario.id),
+            "email": usuario.email,
+            "tipo_conta": usuario.tipo_conta
+        }
+        novo_access_token = criar_token_acesso(dados=token_data)
+        novo_refresh_token = criar_token_refresh(dados=token_data)
+
+        return {
+            "access_token": novo_access_token,
+            "refresh_token": novo_refresh_token,
+            "token_type": "bearer"
+        }
+
+    @staticmethod
+    def excluir_conta(db: Session, usuario_id: int) -> dict:
+        """
+        Executa a exclusão de conta em conformidade com o Artigo 18 da LGPD (Direito ao Esquecimento).
+        Realiza soft delete e anonimização completa de todos os dados identificáveis (PII) do titular.
+        """
+        usuario = UsuarioRepository.buscar_por_id(db, usuario_id)
+        if not usuario:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuário não encontrado."
+            )
+
+        # 1. Soft delete e marcação de status
+        usuario.deletado = True
+        usuario.ativo = False
+        usuario.dataDelecao = datetime.now(timezone.utc)
+
+        # 2. Anonimização irreversível de PII (LGPD)
+        codigo_anonimo = uuid.uuid4().hex[:8]
+        usuario.nome = f"Usuário Anonimizado #{usuario.id}"
+        usuario.email = f"anonimizado_{usuario.id}_{codigo_anonimo}@artfolio.deleted"
+        usuario.cpf_cnpj = None
+        usuario.cpf_hash = None
+        usuario.telefone = None
+        usuario.biografia = None
+        usuario.fotoPerfil = None
+        usuario.instagram = None
+        usuario.behance = None
+        usuario.website = None
+        usuario.trajetoria = None
+        usuario.especializacoes = None
+        usuario.certificados = None
+        usuario.senha = None
+
+        # 3. Marcar postagens como deletadas
+        from app.models.postagem_model import Postagem
+        db.query(Postagem).filter(Postagem.idUsuario == usuario_id).update({
+            "deletado": True,
+            "dataDelecao": datetime.now(timezone.utc)
+        })
+
+        UsuarioRepository.atualizar_usuario(db, usuario)
+
+        # 4. Invalidar caches no Redis
+        redis_client.delete(f"artfolio:perfil:{usuario_id}")
+        redis_client.delete_pattern("artfolio:obras:*")
+        redis_client.delete_pattern(f"artfolio:*:{usuario_id}*")
+
+        return {
+            "status": "sucesso",
+            "mensagem": "Sua conta e dados pessoais foram anonimizados e removidos com sucesso em conformidade com a LGPD."
         }
 
     @staticmethod
@@ -272,6 +621,8 @@ class UsuarioService:
         Raises:
             HTTPException 404: Se o usuário não for encontrado.
         """
+        campos_atualizados = dados.model_dump(exclude_unset=True)
+
         # 1. Buscar o usuário ativo pelo ID
         usuario = UsuarioRepository.buscar_por_id(db, usuario_id)
         if not usuario:
@@ -280,23 +631,43 @@ class UsuarioService:
                 detail="Usuário não encontrado."
             )
 
-        # 2. Extrair apenas os campos que foram enviados na requisição
-        campos_atualizados = dados.model_dump(exclude_unset=True)
+        from app.services.plano_service import PlanoService
+        plano_tipo = PlanoService.obter_tipo_plano_usuario(db, usuario_id)
 
-        # Validação de permissão para mensagem_cta (apenas se for string preenchida)
+        # Validação de permissão para mensagem_cta (recurso exclusivo do plano Boost)
         if "mensagem_cta" in campos_atualizados and campos_atualizados.get("mensagem_cta"):
-            from app.services.plano_service import PlanoService
-            plano_tipo = PlanoService.obter_tipo_plano_usuario(db, usuario_id)
-            if plano_tipo == "Free":
+            if plano_tipo != "Boost":
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="A personalização da mensagem modelo de orçamento (CTA) é exclusiva para assinantes Pro e Boost."
+                    detail="A personalização da mensagem inicial / pitch de vendas (CTA) é um recurso exclusivo para assinantes do plano Artfolio Boost."
+                )
+
+        # Validação de permissão para cor_nome_hex e fundo_perfil (recursos exclusivos do plano Boost)
+        if "cor_nome_hex" in campos_atualizados and campos_atualizados.get("cor_nome_hex"):
+            if plano_tipo != "Boost":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="A personalização da cor do nick é um recurso exclusivo para assinantes do plano Artfolio Boost."
+                )
+
+        if "fundo_perfil" in campos_atualizados and campos_atualizados.get("fundo_perfil"):
+            if plano_tipo != "Boost":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="A personalização do plano de fundo do perfil é um recurso exclusivo para assinantes do plano Artfolio Boost."
+                )
+
+        # Validação de permissão para cor_led_hex (recurso exclusivo dos planos Pro e Boost)
+        if "cor_led_hex" in campos_atualizados and campos_atualizados.get("cor_led_hex"):
+            if plano_tipo not in ["Pro", "Boost"]:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="A personalização da cor da moldura LED neon é um recurso exclusivo para assinantes dos planos Artfolio Pro e Boost."
                 )
 
         # 3. Se nenhum campo foi enviado, retornar o usuário sem alterações
         if not campos_atualizados:
-            from app.services.plano_service import PlanoService
-            usuario.plano = PlanoService.obter_tipo_plano_usuario(db, usuario_id)
+            usuario.plano = plano_tipo
             return usuario
 
         # 4. Aplicar cada campo informado ao objeto SQLAlchemy
@@ -353,7 +724,7 @@ class UsuarioService:
         Salva até 5 categorias de interesse para a personalização do feed (bolha).
         """
         from app.models.preferencia_usuario_model import PreferenciaUsuario
-        ids_validos = list(dict.fromkeys([int(cid) for cid in ids_categorias if cid]))[:5]
+        ids_validos = list(dict.fromkeys([cid for cid in ids_categorias if cid]))[:5]
 
         # Limpar preferências anteriores do usuário
         db.query(PreferenciaUsuario).filter(PreferenciaUsuario.idUsuario == usuario_id).delete()
@@ -394,6 +765,12 @@ class UsuarioService:
                 detail="Usuário não encontrado."
             )
 
+        if not usuario.senha:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Esta conta foi criada via Google e não possui senha local definida."
+            )
+
         # 2. Verificar se a senha atual confere com o hash armazenado
         if not verificar_senha(dados.senhaAtual, usuario.senha):
             raise HTTPException(
@@ -421,6 +798,20 @@ class UsuarioService:
                 detail="Usuário não encontrado."
             )
 
+        from app.services.plano_service import PlanoService
+        plano_tipo = PlanoService.obter_tipo_plano_usuario(db, usuario_id)
+
+        ext = (os.path.splitext(arquivo.filename or "")[1] or "").lower()
+        mime_type = (arquivo.content_type or "").lower()
+
+        # Validação de Avatar Animado (.GIF) exclusivo para o plano Boost
+        is_gif = ext == ".gif" or "image/gif" in mime_type
+        if is_gif and plano_tipo != "Boost":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="O upload de avatar animado em formato GIF é um recurso exclusivo para assinantes do plano Artfolio Boost."
+            )
+
         # 1. Upload seguro para o Cloudinary (pasta 'artfolio/perfis', máx. 5MB)
         secure_url = MediaService.upload_imagem(arquivo, folder="artfolio/perfis", max_size_mb=5)
 
@@ -432,6 +823,7 @@ class UsuarioService:
         redis_client.delete(f"artfolio:perfil:{usuario_id}")
         redis_client.delete_pattern("artfolio:obras:*")
 
+        usuario_atualizado.plano = plano_tipo
         return usuario_atualizado
 
     @staticmethod
@@ -462,7 +854,22 @@ class UsuarioService:
         redis_client.delete(f"artfolio:perfil:{usuario_id}")
         redis_client.delete_pattern("artfolio:obras:*")
 
+        from app.services.plano_service import PlanoService
+        usuario_atualizado.plano = PlanoService.obter_tipo_plano_usuario(db, usuario_id)
         return usuario_atualizado
+
+    @staticmethod
+    def upload_documento_certificado(db: Session, usuario_id: int, arquivo: UploadFile) -> str:
+        """
+        Valida, realiza upload no Cloudinary/local e retorna a URL do certificado ou documento do portfólio.
+        """
+        usuario = UsuarioRepository.buscar_por_id(db, usuario_id)
+        if not usuario:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuário não encontrado."
+            )
+        return MediaService.upload_documento(arquivo, folder="artfolio/certificados", max_size_mb=10)
 
     @staticmethod
     def buscar_perfil_com_cache(db: Session, usuario_id: int) -> Optional[UsuarioResposta]:
@@ -537,6 +944,8 @@ class UsuarioService:
             tipo_conta=usuario.tipo_conta,
             tipo_usuario=usuario.tipo_usuario,
             mostrar_moldura_led=getattr(usuario, "mostrar_moldura_led", True),
+            mostrar_badge_plano=getattr(usuario, "mostrar_badge_plano", True),
+            cor_led_hex=getattr(usuario, "cor_led_hex", "#FF793F") or "#FF793F",
             mensagem_cta=getattr(usuario, "mensagem_cta", None),
             plano=plano_tipo,
             dataCriacao=usuario.dataCriacao,

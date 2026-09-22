@@ -1,3 +1,4 @@
+from app.models.usuario_model import Usuario
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import String, Text, DateTime, ForeignKey, func
@@ -22,7 +23,7 @@ class Log(Base):
     descricao: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relacionamento
-    usuario: Mapped[Optional["Usuario"]] = relationship("Usuario", lazy="joined")
+    usuario: Mapped[Optional[Usuario]] = relationship(Usuario, lazy="joined")
 
     def __repr__(self) -> str:
         return f"<Log(id={self.id}, acao='{self.acao}', tabelaAfetada='{self.tabelaAfetada}')>"

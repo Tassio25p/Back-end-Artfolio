@@ -1,8 +1,10 @@
 # Bibliotecas
 import os
+import json
 import asyncio
+from typing import Optional
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -10,6 +12,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from app.core.config import settings
 from app.core.limiter import limiter
+from app.core.security import validar_token_jwt
 from app.core.websocket_manager import manager, iniciar_subscriber_redis
 from app.database import engine, Base, SessionLocal
 from app.services.trending_service import TrendingService
@@ -26,8 +29,8 @@ from app.controllers import (
     mensagem_controller,
     plano_controller,
     trending_controller,
+    pagamento_controller,
 )
-from app.routers.notificacoes import router as notificacoes_router
 
 
 # Modelos
@@ -73,10 +76,22 @@ try:
                 "especializacoes": "TEXT",
                 "certificados": "TEXT",
                 "mostrar_moldura_led": "BOOLEAN DEFAULT TRUE",
+                "mostrar_badge_plano": "BOOLEAN DEFAULT TRUE",
+                "cor_led_hex": "VARCHAR(20) DEFAULT '#FF793F'",
                 "mensagem_cta": "TEXT",
+                "cpf_hash": "VARCHAR(64)",
                 "ativo": "BOOLEAN DEFAULT TRUE",
                 "suspenso_ate": "TIMESTAMP",
+                "codigo_verificacao": "VARCHAR(10)",
+                "is_verified": "BOOLEAN DEFAULT FALSE",
             }
+            # Garantir expansão do campo cpf_cnpj para armazenar criptografia AES
+            try:
+                conn.execute(text("ALTER TABLE usuario ALTER COLUMN cpf_cnpj TYPE VARCHAR(500)"))
+                conn.commit()
+            except Exception:
+                pass
+
             for coluna, tipo in colunas_usuario.items():
                 coluna_existe = conn.execute(text(
                     f"SELECT EXISTS (SELECT 1 FROM information_schema.columns "
@@ -172,26 +187,67 @@ try:
                     conn.commit()
                     print(f"[OK] Coluna '{coluna}' adicionada com sucesso à tabela 'denuncia_chat'.")
 
-        # Garantir coluna deletado_por em mensagem
+        # Garantir colunas em mensagem
         tabela_msg_existe = conn.execute(text(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'mensagem')"
         )).scalar()
         if tabela_msg_existe:
-            col_del_existe = conn.execute(text(
-                "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'mensagem' AND column_name = 'deletado_por')"
-            )).scalar()
-            if not col_del_existe:
-                conn.execute(text("ALTER TABLE mensagem ADD COLUMN deletado_por VARCHAR(255) DEFAULT ''"))
-                conn.commit()
-                print("[OK] Coluna 'deletado_por' adicionada com sucesso à tabela 'mensagem'.")
+            colunas_msg = {
+                "deletado_por": "VARCHAR(255) DEFAULT ''",
+                "lida": "BOOLEAN DEFAULT FALSE",
+                "editado_em": "TIMESTAMP",
+                "deletado_em": "TIMESTAMP",
+                "deletado_por_id": "INTEGER REFERENCES usuario(id)",
+                "datadelecao": "TIMESTAMP",
+                "deletado": "BOOLEAN DEFAULT FALSE",
+                "dataenvio": "TIMESTAMP DEFAULT NOW()",
+                "arquivourl": "VARCHAR(255)",
+            }
+            for coluna, tipo in colunas_msg.items():
+                col_existe = conn.execute(text(
+                    f"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'mensagem' AND column_name = '{coluna}')"
+                )).scalar()
+                if not col_existe:
+                    conn.execute(text(f"ALTER TABLE mensagem ADD COLUMN {coluna} {tipo}"))
+                    conn.commit()
+                    print(f"[OK] Coluna '{coluna}' adicionada com sucesso à tabela 'mensagem'.")
 
-            col_lida_existe = conn.execute(text(
-                "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'mensagem' AND column_name = 'lida')"
-            )).scalar()
-            if not col_lida_existe:
-                conn.execute(text("ALTER TABLE mensagem ADD COLUMN lida BOOLEAN DEFAULT FALSE"))
-                conn.commit()
-                print("[OK] Coluna 'lida' adicionada com sucesso à tabela 'mensagem'.")
+        # Garantir colunas em conversa e conversausuario
+        tabela_conversa_existe = conn.execute(text(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'conversa')"
+        )).scalar()
+        if tabela_conversa_existe:
+            colunas_conversa = {
+                "datacriacao": "TIMESTAMP DEFAULT NOW()",
+                "deletado": "BOOLEAN DEFAULT FALSE",
+                "datadelecao": "TIMESTAMP"
+            }
+            for coluna, tipo in colunas_conversa.items():
+                col_existe = conn.execute(text(
+                    f"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'conversa' AND column_name = '{coluna}')"
+                )).scalar()
+                if not col_existe:
+                    conn.execute(text(f"ALTER TABLE conversa ADD COLUMN {coluna} {tipo}"))
+                    conn.commit()
+                    print(f"[OK] Coluna '{coluna}' adicionada com sucesso à tabela 'conversa'.")
+
+        tabela_cu_existe = conn.execute(text(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'conversausuario')"
+        )).scalar()
+        if tabela_cu_existe:
+            colunas_cu = {
+                "dataentrada": "TIMESTAMP DEFAULT NOW()",
+                "deletado": "BOOLEAN DEFAULT FALSE",
+                "datadelecao": "TIMESTAMP"
+            }
+            for coluna, tipo in colunas_cu.items():
+                col_existe = conn.execute(text(
+                    f"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'conversausuario' AND column_name = '{coluna}')"
+                )).scalar()
+                if not col_existe:
+                    conn.execute(text(f"ALTER TABLE conversausuario ADD COLUMN {coluna} {tipo}"))
+                    conn.commit()
+                    print(f"[OK] Coluna '{coluna}' adicionada com sucesso à tabela 'conversausuario'.")
 
         # Garantir colunas da Central de Notificações
         tabela_notif_existe = conn.execute(text(
@@ -284,6 +340,46 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Origens permitidas para requisições cross-origin (CORS)
+ORIGENS_PERMITIDAS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+# Configuração estrita e completa do CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ORIGENS_PERMITIDAS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
+
+# Middleware de Security Headers (OWASP Hardening)
+@app.middleware("http")
+async def adicionar_security_headers(request: Request, call_next):
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        origem = request.headers.get("origin")
+        origem_permitida = origem if origem in ORIGENS_PERMITIDAS else ORIGENS_PERMITIDAS[0]
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Erro interno do servidor.", "erro": str(exc)},
+            headers={
+                "Access-Control-Allow-Origin": origem_permitida,
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
 # Configuração do Rate Limiting (SlowAPI + Redis)
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
@@ -296,25 +392,42 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
             "status": 429,
             "erro": "RateLimitExceeded",
             "mensagem": "Você fez muitas requisições em pouco tempo. Aguarde um minuto e tente novamente.",
-            "detalhes": str(exc.detail),
+            "detalhes": exc.detail,
         },
     )
 
-# Configuração do CORS com origens explícitas para compatibilidade total com credenciais
-origens_permitidas = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+from fastapi.exceptions import ResponseValidationError
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origens_permitidas,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+@app.exception_handler(ResponseValidationError)
+async def response_validation_handler(request: Request, exc: ResponseValidationError):
+    import logging
+    logging.error(f"ResponseValidationError em {request.url}: {exc.errors()}")
+    origem = request.headers.get("origin")
+    origem_permitida = origem if origem in ORIGENS_PERMITIDAS else ORIGENS_PERMITIDAS[0]
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Erro de validação de resposta da API.", "erros": str(exc.errors())},
+        headers={
+            "Access-Control-Allow-Origin": origem_permitida,
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
+
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.exceptions import HTTPException as FastAPIHTTPException
+
+@app.exception_handler(FastAPIHTTPException)
+@app.exception_handler(StarletteHTTPException)
+async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    origem = request.headers.get("origin")
+    origem_permitida = origem if origem in ORIGENS_PERMITIDAS else ORIGENS_PERMITIDAS[0]
+    headers = getattr(exc, "headers", None) or {}
+    headers["Access-Control-Allow-Origin"] = origem_permitida
+    headers["Access-Control-Allow-Credentials"] = "true"
+
+    if isinstance(exc.detail, dict):
+        return JSONResponse(status_code=exc.status_code, content=exc.detail, headers=headers)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=headers)
 
 # Inclusão dos roteadores de controllers da aplicação
 app.include_router(auth_controller.router)
@@ -322,21 +435,46 @@ app.include_router(usuario_controller.router)
 app.include_router(postagem_controller.router)
 app.include_router(artista_controller.router)
 app.include_router(feed_controller.router)
-app.include_router(notificacoes_router, prefix="/notificacoes", tags=["Notificações"])
+app.include_router(notificacao_controller.router)
 app.include_router(admin_controller.router)
 app.include_router(mensagem_controller.router)
 app.include_router(mensagem_controller.chat_router)
 app.include_router(plano_controller.router)
 app.include_router(trending_controller.router)
+app.include_router(pagamento_controller.router)
 
-# Endpoint WebSocket de Notificações
+# Endpoint WebSocket de Notificações e Chat com autenticação JWT estrita (BOLA / IDOR Protection)
+@app.websocket("/ws")
+@app.websocket("/ws/notificacoes")
 @app.websocket("/ws/notificacoes/{user_id}")
 @app.websocket("/ws/{user_id}")
-async def websocket_notificacoes(websocket: WebSocket, user_id: int):
+async def websocket_notificacoes(
+    websocket: WebSocket,
+    user_id: Optional[int] = None,
+    token: Optional[str] = Query(None)
+):
     """
-    Endpoint WebSocket raiz para conexão de notificações em tempo real.
+    Endpoint WebSocket blindado com autenticação JWT obrigatória via Query Parameter (?token=...).
+    O user_id é extraído estritamente do payload assinado do token JWT, impedindo BOLA / IDOR.
+    Se o token for ausente, expirado ou inválido, a conexão é encerrada com código 4001.
     """
-    await manager.connect(websocket, user_id)
+    if not token:
+        await websocket.close(code=4001, reason="Token de autenticação não fornecido.")
+        return
+
+    try:
+        payload = validar_token_jwt(token, tipo_esperado="access")
+        usuario_id_token_str = payload.get("sub")
+        if not usuario_id_token_str:
+            await websocket.close(code=4001, reason="Token inválido: sujeito ausente.")
+            return
+        auth_user_id = int(usuario_id_token_str)
+    except Exception:
+        await websocket.close(code=4001, reason="Token inválido ou expirado.")
+        return
+
+    # Conecta o WebSocket com o ID estritamente validado do token
+    await manager.connect(websocket, auth_user_id)
     try:
         while True:
             data = await websocket.receive_text()
@@ -344,10 +482,10 @@ async def websocket_notificacoes(websocket: WebSocket, user_id: int):
                 await websocket.send_text("pong")
             else:
                 try:
-                    payload = json.loads(data)
-                    tipo = str(payload.get("tipo", "")).upper()
+                    payload_ws = json.loads(data)
+                    tipo = str(payload_ws.get("tipo", "")).upper()
                     if tipo in ("DIGITANDO", "TYPING"):
-                        conversa_id = payload.get("conversa_id") or payload.get("idConversa")
+                        conversa_id = payload_ws.get("conversa_id") or payload_ws.get("idConversa")
                         if conversa_id:
                             from app.database import SessionLocal
                             from app.repositories.conversa_repository import ConversaRepository
@@ -355,13 +493,13 @@ async def websocket_notificacoes(websocket: WebSocket, user_id: int):
                             try:
                                 participantes = ConversaRepository.buscar_participantes(db_ws, int(conversa_id))
                                 for p in participantes:
-                                    if p.idUsuario != user_id:
-                                        await manager.send_personal_message(p.idUsuario, payload)
+                                    if p.idUsuario != auth_user_id:
+                                        await manager.send_personal_message(p.idUsuario, payload_ws)
                             finally:
                                 db_ws.close()
                     elif tipo in ("MENSAGEM", "NOVA_MENSAGEM", "CHAT_MESSAGE"):
-                        conversa_id = payload.get("conversa_id") or payload.get("idConversa")
-                        conteudo = payload.get("conteudo") or payload.get("mensagem")
+                        conversa_id = payload_ws.get("conversa_id") or payload_ws.get("idConversa")
+                        conteudo = payload_ws.get("conteudo") or payload_ws.get("mensagem")
                         if conversa_id and conteudo:
                             from app.database import SessionLocal
                             from app.services.mensagem_service import MensagemService
@@ -370,17 +508,16 @@ async def websocket_notificacoes(websocket: WebSocket, user_id: int):
                             try:
                                 await MensagemService.enviar_mensagem(
                                     db=db_ws,
-                                    remetente_id=user_id,
+                                    remetente_id=auth_user_id,
                                     conversa_id=int(conversa_id),
                                     dados=MensagemCriar(conteudo=str(conteudo))
                                 )
                             finally:
                                 db_ws.close()
-
                 except Exception:
                     pass
     except (WebSocketDisconnect, Exception):
-        manager.disconnect(websocket, user_id)
+        manager.disconnect(websocket, auth_user_id)
 
 
 # Servir arquivos estáticos (uploads de fotos de perfil, obras, certificados, etc.)

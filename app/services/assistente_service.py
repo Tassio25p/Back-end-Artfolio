@@ -1,10 +1,54 @@
-from typing import List, Optional
+from typing import List, Optional, Any
 import httpx
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
-from app.models.assistente_conversa_model import AssistenteConversa
-from app.models.assistente_mensagem_model import AssistenteMensagem
-from app.repositories.assistente_repository import AssistenteRepository
+# Modelos e repositórios temporariamente isolados até implementação completa no banco
+try:
+    # pyrefly: ignore [missing-import]
+    from app.models.assistente_conversa_model import AssistenteConversa
+    # pyrefly: ignore [missing-import]
+    from app.models.assistente_mensagem_model import AssistenteMensagem
+    # pyrefly: ignore [missing-import]
+    from app.repositories.assistente_repository import AssistenteRepository 
+except ImportError:
+    class _AssistenteConversaStub:
+        pass
+
+    class _AssistenteMensagemStub:
+        pass
+
+    class _AssistenteRepositoryStub:
+        @staticmethod
+        def buscar_conversa_por_id(*args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError("AssistenteRepository ainda não implementado no banco.")
+
+        @staticmethod
+        def criar_conversa(*args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError("AssistenteRepository ainda não implementado no banco.")
+
+        @staticmethod
+        def criar_mensagem(*args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError("AssistenteRepository ainda não implementado no banco.")
+
+        @staticmethod
+        def atualizar_conversa(*args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError("AssistenteRepository ainda não implementado no banco.")
+
+        @staticmethod
+        def listar_conversas(*args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError("AssistenteRepository ainda não implementado no banco.")
+
+        @staticmethod
+        def encerrar_conversa(*args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError("AssistenteRepository ainda não implementado no banco.")
+
+        @staticmethod
+        def deletar_conversa(*args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError("AssistenteRepository ainda não implementado no banco.")
+
+    AssistenteConversa: Any = _AssistenteConversaStub
+    AssistenteMensagem: Any = _AssistenteMensagemStub
+    AssistenteRepository: Any = _AssistenteRepositoryStub
 
 
 # URL do webhook do agente IA no n8n

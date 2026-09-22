@@ -1,3 +1,5 @@
+from app.models.categoria_model import Categoria
+from app.models.usuario_model import Usuario
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import DateTime, ForeignKey, func
@@ -16,8 +18,8 @@ class PreferenciaUsuario(Base):
     dataSelecao: Mapped[Optional[datetime]] = mapped_column("dataselecao", DateTime, server_default=func.now())
 
     # Relacionamentos
-    usuario: Mapped["Usuario"] = relationship("Usuario", lazy="joined")
-    categoria: Mapped["Categoria"] = relationship("Categoria", lazy="joined")
+    usuario: Mapped[Usuario] = relationship(Usuario, lazy="joined")
+    categoria: Mapped[Categoria] = relationship(Categoria, lazy="joined")
 
     def __repr__(self) -> str:
         return f"<PreferenciaUsuario(idUsuario={self.idUsuario}, idCategoria={self.idCategoria})>"

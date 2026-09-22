@@ -97,16 +97,33 @@ def limpar_conversa(
     """
     return MensagemService.limpar_conversa(db, usuario_atual.id, conversa_id)
 
-@router.delete("/mensagens/{mensagem_id}", status_code=status.HTTP_200_OK, summary="Excluir mensagem (Soft Delete)")
-async def deletar_mensagem(
+@router.delete("/mensagens/{mensagem_id}", status_code=status.HTTP_200_OK, summary="Excluir mensagem para o usuário atual")
+def deletar_mensagem(
     mensagem_id: int,
     usuario_atual: Usuario = Depends(obter_usuario_atual),
     db: Session = Depends(get_db)
 ):
     """
-    Aplica Soft Delete na mensagem marcando deletado_em e emitindo evento via WebSocket.
+    Oculta a mensagem individualmente apenas para o usuário autenticado.
     """
-    return await MensagemService.soft_delete_mensagem(db, usuario_atual.id, mensagem_id)
+    return MensagemService.deletar_mensagem_individual(db, usuario_atual.id, mensagem_id)
+
+@router.post("/mensagens/excluir-lote", status_code=status.HTTP_200_OK, summary="Excluir lote de mensagens para o usuário atual")
+def deletar_mensagens_lote(
+    dados: dict,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Oculta múltiplas mensagens apenas para o usuário autenticado.
+    """
+    ids = dados.get("mensagem_ids") or dados.get("ids") or []
+    for msg_id in ids:
+        try:
+            MensagemService.deletar_mensagem_individual(db, usuario_atual.id, int(msg_id))
+        except Exception:
+            pass
+    return {"message": f"{len(ids)} mensagens excluídas para você com sucesso."}
 
 @router.patch("/mensagens/{mensagem_id}", response_model=MensagemResposta, status_code=status.HTTP_200_OK, summary="Editar mensagem")
 async def editar_mensagem(
@@ -168,16 +185,33 @@ async def editar_mensagem_chat(
     """
     return await MensagemService.editar_mensagem(db, usuario_atual.id, mensagem_id, dados)
 
-@chat_router.delete("/mensagens/{mensagem_id}", status_code=status.HTTP_200_OK, summary="Excluir mensagem Soft Delete (alias /chat)")
-async def deletar_mensagem_chat(
+@chat_router.delete("/mensagens/{mensagem_id}", status_code=status.HTTP_200_OK, summary="Excluir mensagem para o usuário atual (alias /chat)")
+def deletar_mensagem_chat(
     mensagem_id: int,
     usuario_atual: Usuario = Depends(obter_usuario_atual),
     db: Session = Depends(get_db)
 ):
     """
-    Aplica Soft Delete na mensagem marcando deletado_em e emitindo evento via WebSocket.
+    Oculta a mensagem individualmente apenas para o usuário autenticado.
     """
-    return await MensagemService.soft_delete_mensagem(db, usuario_atual.id, mensagem_id)
+    return MensagemService.deletar_mensagem_individual(db, usuario_atual.id, mensagem_id)
+
+@chat_router.post("/mensagens/excluir-lote", status_code=status.HTTP_200_OK, summary="Excluir lote de mensagens para o usuário atual (alias /chat)")
+def deletar_mensagens_lote_chat(
+    dados: dict,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Oculta múltiplas mensagens apenas para o usuário autenticado.
+    """
+    ids = dados.get("mensagem_ids") or dados.get("ids") or []
+    for msg_id in ids:
+        try:
+            MensagemService.deletar_mensagem_individual(db, usuario_atual.id, int(msg_id))
+        except Exception:
+            pass
+    return {"message": f"{len(ids)} mensagens excluídas para você com sucesso."}
 
 @chat_router.post("/denuncias", response_model=DenunciaChatResposta, status_code=status.HTTP_201_CREATED, summary="Registrar denúncia de conversa/usuário (alias /chat)")
 def registrar_denuncia_chat_alias(

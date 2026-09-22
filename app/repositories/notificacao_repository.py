@@ -1,5 +1,5 @@
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models.notificacao_model import Notificacao
@@ -131,7 +131,7 @@ class NotificacaoRepository:
         Realiza o soft delete de uma notificação.
         """
         notificacao.deletado = True
-        notificacao.dataDelecao = datetime.utcnow()
+        notificacao.dataDelecao = datetime.now(timezone.utc)
         db.commit()
 
     @staticmethod
@@ -144,7 +144,7 @@ class NotificacaoRepository:
             Notificacao.deletado == False
         ).update({
             "deletado": True,
-            "dataDelecao": datetime.utcnow()
+            "dataDelecao": datetime.now(timezone.utc)
         }, synchronize_session=False)
         db.commit()
         return qtd

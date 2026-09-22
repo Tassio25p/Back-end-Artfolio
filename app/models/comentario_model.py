@@ -1,3 +1,4 @@
+from app.models.usuario_model import Usuario
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import Text, Boolean, DateTime, ForeignKey, func
@@ -20,7 +21,7 @@ class Comentario(Base):
     dataDelecao: Mapped[Optional[datetime]] = mapped_column("datadelecao", DateTime, nullable=True)
 
     # Relacionamento para trazer os dados do usuário que comentou
-    usuario: Mapped["Usuario"] = relationship("Usuario", lazy="joined")
+    usuario: Mapped[Usuario] = relationship(Usuario, lazy="joined")
 
     def __repr__(self) -> str:
         return f"<Comentario(id={self.id}, idUsuario={self.idUsuario}, idPostagem={self.idPostagem})>"

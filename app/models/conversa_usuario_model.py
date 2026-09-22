@@ -1,3 +1,5 @@
+from app.models.usuario_model import Usuario
+from app.models.conversa_model import Conversa
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import Boolean, DateTime, ForeignKey, func
@@ -20,8 +22,8 @@ class ConversaUsuario(Base):
     dataDelecao: Mapped[Optional[datetime]] = mapped_column("datadelecao", DateTime, nullable=True)
 
     # Relacionamentos
-    conversa: Mapped["Conversa"] = relationship("Conversa", lazy="joined")
-    usuario: Mapped["Usuario"] = relationship("Usuario", lazy="joined")
+    conversa: Mapped[Conversa] = relationship(Conversa, lazy="joined")
+    usuario: Mapped[Usuario] = relationship(Usuario, lazy="joined")
 
     def __repr__(self) -> str:
         return f"<ConversaUsuario(idConversa={self.idConversa}, idUsuario={self.idUsuario})>"

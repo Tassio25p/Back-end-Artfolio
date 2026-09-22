@@ -1,5 +1,5 @@
 from typing import List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models.postagem_model import Postagem
@@ -122,7 +122,7 @@ class EstatisticaService:
             Seguidor.idSeguido == artista_id
         ).scalar() or 0
 
-        agora = datetime.utcnow()
+        agora = datetime.now(timezone.utc)
         uma_semana_atras = agora - timedelta(days=7)
         um_mes_atras = agora - timedelta(days=30)
 

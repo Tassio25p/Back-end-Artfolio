@@ -1,5 +1,5 @@
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from app.models.postagem_model import Postagem
 from app.models.postagem_categoria_model import PostagemCategoria
@@ -45,7 +45,26 @@ class PostagemRepository:
             busca_like = f"%{termo_busca}%"
             query = query.filter(Postagem.legenda.ilike(busca_like))
 
+        # Se for listagem do perfil de um usuário específico, prioriza obras fixadas (mais recentes fixadas no topo)
+        if usuario_id is not None:
+            return query.order_by(
+                Postagem.fixado.desc(),
+                Postagem.fixado_em.desc().nullslast(),
+                Postagem.dataPostagem.desc()
+            ).all()
+
         return query.order_by(Postagem.dataPostagem.desc()).all()
+
+    @staticmethod
+    def contar_fixadas(db: Session, usuario_id: int) -> int:
+        """
+        Retorna o total de postagens ativas atualmente fixadas pelo usuário.
+        """
+        return db.query(Postagem).filter(
+            Postagem.idUsuario == usuario_id,
+            Postagem.fixado == True,
+            Postagem.deletado == False
+        ).count()
 
     @staticmethod
     def vincular_categorias(db: Session, postagem_id: int, categoria_ids: List[int]) -> None:
@@ -94,5 +113,5 @@ class PostagemRepository:
         Realiza o soft delete de uma postagem, marcando-a como deletada.
         """
         postagem.deletado = True
-        postagem.dataDelecao = datetime.utcnow()
+        postagem.dataDelecao = datetime.now(timezone.utc)
         db.commit()

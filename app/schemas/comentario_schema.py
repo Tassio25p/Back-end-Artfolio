@@ -33,7 +33,7 @@ class ComentarioResposta(BaseModel):
     """
     id: int
     conteudo: str
-    dataCriacao: datetime = Field(None, alias="dataCriacao")
+    dataCriacao: datetime = Field(..., alias="dataCriacao")
     usuario: Optional[ComentarioUsuarioResposta] = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

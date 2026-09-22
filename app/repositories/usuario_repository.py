@@ -2,6 +2,7 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from app.models.usuario_model import Usuario
+from app.core.security import gerar_hash_busca_cpf
 
 class UsuarioRepository:
     """
@@ -28,7 +29,7 @@ class UsuarioRepository:
     def buscar_por_cpf(db: Session, cpf: Optional[str]) -> Optional[Usuario]:
         """
         Busca um usuário ativo no banco de dados através do CPF/CNPJ.
-        Limpa pontuações e verifica tanto formato limpo quanto formatado.
+        Utiliza o hash cego determinístico (HMAC-SHA256) e fallback legado.
         """
         if not cpf or not cpf.strip():
             return None
@@ -36,6 +37,7 @@ class UsuarioRepository:
         if not cpf_limpo:
             return None
 
+        cpf_hash = gerar_hash_busca_cpf(cpf_limpo)
         doc_formatado = None
         if len(cpf_limpo) == 11:
             doc_formatado = f"{cpf_limpo[:3]}.{cpf_limpo[3:6]}.{cpf_limpo[6:9]}-{cpf_limpo[9:]}"
@@ -44,6 +46,7 @@ class UsuarioRepository:
 
         return db.query(Usuario).filter(
             or_(
+                Usuario.cpf_hash == cpf_hash,
                 Usuario.cpf_cnpj == cpf_limpo,
                 Usuario.cpf_cnpj == doc_formatado
             ),
@@ -77,7 +80,6 @@ class UsuarioRepository:
         """
         Busca um usuário no banco de dados através do CPF/CNPJ,
         incluindo usuários que foram deletados logicamente.
-        Compara tanto formato apenas com dígitos quanto formato com pontuação.
         """
         if not cpf or not cpf.strip():
             return None
@@ -85,6 +87,7 @@ class UsuarioRepository:
         if not cpf_limpo:
             return None
 
+        cpf_hash = gerar_hash_busca_cpf(cpf_limpo)
         doc_formatado = None
         if len(cpf_limpo) == 11:
             doc_formatado = f"{cpf_limpo[:3]}.{cpf_limpo[3:6]}.{cpf_limpo[6:9]}-{cpf_limpo[9:]}"
@@ -93,6 +96,7 @@ class UsuarioRepository:
 
         return db.query(Usuario).filter(
             or_(
+                Usuario.cpf_hash == cpf_hash,
                 Usuario.cpf_cnpj == cpf_limpo,
                 Usuario.cpf_cnpj == doc_formatado
             )

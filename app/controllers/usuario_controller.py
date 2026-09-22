@@ -138,6 +138,22 @@ def alterar_senha(
     return UsuarioService.alterar_senha(db, usuario_atual.id, dados)
 
 
+@router.delete(
+    "/me",
+    status_code=status.HTTP_200_OK,
+    summary="Excluir conta com anonimização de dados (Direito ao Esquecimento - LGPD)"
+)
+def excluir_conta_lgpd(
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Exclui a conta do usuário e anonimiza todos os dados pessoais sensíveis (PII)
+    em conformidade com as diretrizes do Art. 18 da LGPD.
+    """
+    return UsuarioService.excluir_conta(db, usuario_atual.id)
+
+
 # --- Endpoints de Seguir / Deixar de Seguir ---
 
 @router.post(

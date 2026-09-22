@@ -18,5 +18,5 @@ def obter_feed(
     """
     Retorna o feed cronológico de postagens ativas (mais recentes primeiro).
     """
-    user_id = usuario_atual.id if usuario_atual else None
+    user_id: Optional[int] = usuario_atual.id if usuario_atual else None
     return FeedService.obter_feed(db, user_id)

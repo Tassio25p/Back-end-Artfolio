@@ -1,3 +1,4 @@
+from typing import Optional
 import redis
 import logging
 from app.core.config import settings
@@ -37,7 +38,7 @@ class SafeRedisClient:
             logger.warning(f"Não foi possível conectar ao Redis: {e}. O sistema funcionará sem cache.")
             self.client = None
 
-    def get(self, chave: str) -> str:
+    def get(self, chave: str) -> Optional[str]:
         """
         Busca um valor no cache por sua chave.
         Retorna None se a chave não existir ou se o Redis estiver fora do ar.

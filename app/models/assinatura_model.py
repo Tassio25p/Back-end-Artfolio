@@ -1,3 +1,5 @@
+from app.models.plano_model import Plano
+from app.models.usuario_model import Usuario
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import Boolean, DateTime, ForeignKey, func
@@ -26,8 +28,8 @@ class Assinatura(Base):
     dataDelecao: Mapped[Optional[datetime]] = mapped_column("datadelecao", DateTime, nullable=True)
 
     # Relacionamentos
-    usuario: Mapped["Usuario"] = relationship("Usuario", lazy="joined")
-    plano: Mapped["Plano"] = relationship("Plano", lazy="joined")
+    usuario: Mapped[Usuario] = relationship(Usuario, lazy="joined")
+    plano: Mapped[Plano] = relationship(Plano, lazy="joined")
 
     def __repr__(self) -> str:
         return f"<Assinatura(id={self.id}, idUsuario={self.idUsuario}, idPlano={self.idPlano}, ativa={self.ativa})>"

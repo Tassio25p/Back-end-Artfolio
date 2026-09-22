@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -242,7 +242,7 @@ def atualizar_denuncia(
     denuncia.status = novo_status
     denuncia.nota_moderador = dados.nota_moderador
     denuncia.moderador_id = moderador.id
-    denuncia.resolvido_em = datetime.utcnow()
+    denuncia.resolvido_em = datetime.now(timezone.utc)
 
     # Registro de auditoria obrigatório
     log = LogAuditoria(
@@ -300,7 +300,7 @@ def listar_obras_quarentena(
 
     resposta: List[ObraQuarentenaResposta] = []
     for o in obras:
-        cats = [c.nome for c in o.categorias] if o.categorias else []
+        cats = [c.nomeCategoria for c in o.categorias] if o.categorias else []
         resposta.append(
             ObraQuarentenaResposta(
                 id=o.id,
@@ -377,7 +377,7 @@ def julgar_obra(
         motivo = dados.motivo.strip() if dados.motivo else "Violação das diretrizes da comunidade."
         obra.status = "rejeitada"
         obra.deletado = True
-        obra.dataDelecao = datetime.utcnow()
+        obra.dataDelecao = datetime.now(timezone.utc)
 
         # Notificação formal para o artista
         notif = Notificacao(
@@ -466,7 +466,7 @@ def aplicar_sancao_usuario(
 
     elif acao == "suspender":
         dias = dados.dias_suspensao if (dados.dias_suspensao and dados.dias_suspensao > 0) else 7
-        data_fim = datetime.utcnow() + timedelta(days=dias)
+        data_fim = datetime.now(timezone.utc) + timedelta(days=dias)
         usuario.suspenso_ate = data_fim
 
         notif = Notificacao(
@@ -489,7 +489,7 @@ def aplicar_sancao_usuario(
     elif acao == "banir":
         usuario.ativo = False
         usuario.deletado = True
-        usuario.dataDelecao = datetime.utcnow()
+        usuario.dataDelecao = datetime.now(timezone.utc)
 
         log = LogAuditoria(
             moderador_id=moderador.id,

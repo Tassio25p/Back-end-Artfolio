@@ -1,3 +1,5 @@
+from app.models.conversa_model import Conversa
+from app.models.usuario_model import Usuario
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import String, Text, Boolean, DateTime, ForeignKey, func
@@ -31,9 +33,9 @@ class Mensagem(Base):
     deletado_por_id: Mapped[Optional[int]] = mapped_column("deletado_por_id", ForeignKey("usuario.id"), nullable=True, default=None)
 
     # Relacionamentos
-    remetente: Mapped["Usuario"] = relationship("Usuario", foreign_keys=[idRemetente], lazy="joined")
-    conversa: Mapped["Conversa"] = relationship("Conversa", lazy="joined")
-    deletado_por_usuario: Mapped[Optional["Usuario"]] = relationship("Usuario", foreign_keys=[deletado_por_id], lazy="select")
+    remetente: Mapped[Usuario] = relationship(Usuario, foreign_keys=[idRemetente], lazy="joined")
+    conversa: Mapped[Conversa] = relationship(Conversa, lazy="joined")
+    deletado_por_usuario: Mapped[Optional[Usuario]] = relationship(Usuario, foreign_keys=[deletado_por_id], lazy="select")
 
     def __repr__(self) -> str:
         return f"<Mensagem(id={self.id}, idRemetente={self.idRemetente}, idConversa={self.idConversa})>"

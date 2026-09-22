@@ -31,7 +31,9 @@ class Settings(BaseSettings):
     # Configurações de Segurança e JWT
     JWT_SECRET_KEY: str = "9476cf647ea376a9172f3a9e3381a179ceb6cf6a27e7f1e63a129d2f23ea6e61"
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    DATA_ENCRYPTION_KEY: str = "9476cf647ea376a9172f3a9e3381a179ceb6cf6a27e7f1e63a129d2f23ea6e61"
 
     # Diretórios
     UPLOAD_DIR: str = "uploads"
@@ -43,6 +45,18 @@ class Settings(BaseSettings):
 
     # Configuração do Google OAuth2
     GOOGLE_CLIENT_ID: str = ""
+
+    # Configurações do Stripe
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRICE_ID_PRO: str = ""
+    STRIPE_PRICE_ID_BOOST: str = ""
+    FRONTEND_URL: str = "http://localhost:5173"
+
+    # Configurações do Brevo (Envio Transacional de E-mail)
+    BREVO_API_KEY = os.getenv("BREVO_API_KEY")
+    BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL")
+    BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME")
 
     # Configuração de leitura de arquivos .env
     model_config = SettingsConfigDict(

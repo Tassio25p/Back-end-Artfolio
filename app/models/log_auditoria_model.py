@@ -1,4 +1,5 @@
-from datetime import datetime
+from app.models.usuario_model import Usuario
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import String, Text, DateTime, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -17,10 +18,10 @@ class LogAuditoria(Base):
     alvo_tipo: Mapped[str] = mapped_column(String(50), nullable=False)
     alvo_id: Mapped[int] = mapped_column(nullable=False)
     detalhes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    criado_em: Mapped[Optional[datetime]] = mapped_column("criado_em", DateTime, server_default=func.now(), default=datetime.utcnow)
+    criado_em: Mapped[Optional[datetime]] = mapped_column("criado_em", DateTime, server_default=func.now(), default=lambda: datetime.now(timezone.utc))
 
     # Relacionamento com o usuário moderador
-    moderador: Mapped["Usuario"] = relationship("Usuario", foreign_keys=[moderador_id], lazy="joined")
+    moderador: Mapped[Usuario] = relationship(Usuario, foreign_keys=[moderador_id], lazy="joined")
 
     def __repr__(self) -> str:
         return f"<LogAuditoria(id={self.id}, moderador_id={self.moderador_id}, acao='{self.acao}', alvo_tipo='{self.alvo_tipo}', alvo_id={self.alvo_id})>"

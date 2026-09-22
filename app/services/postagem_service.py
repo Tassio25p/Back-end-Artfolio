@@ -1,5 +1,6 @@
 import json
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import List, Optional, Union, Any
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -28,7 +29,7 @@ class PostagemService:
         categoria_id: Optional[int] = None,
         termo_busca: Optional[str] = None,
         usuario_atual_id: Optional[int] = None
-    ) -> List[Postagem]:
+    ) -> List[Union[Postagem, PostagemResposta]]:
         """
         Retorna a lista de obras ativas no sistema, aplicando os filtros caso fornecidos.
         Utiliza cache Redis (artfolio:obras:*) com fallback transparente para o PostgreSQL.
@@ -175,7 +176,6 @@ class PostagemService:
             obra.usuario.usuario_seguindo = usuario_seguindo
             obra.usuario.seguindo_usuario = usuario_seguindo
             obra.usuario.foto_perfil = obra.usuario.fotoPerfil
-            obra.usuario.tipo_usuario = getattr(obra.usuario, "tipo_conta", "artista")
 
             # Objeto autor compatível com PostagemUsuarioResumidoResposta
             obra.autor = obra.usuario
@@ -233,7 +233,10 @@ class PostagemService:
             idUsuario=usuario_id,
             legenda=dados.legenda,
             arquivoUrl=url_principal,
-            arquivos_raw=arquivos_json
+            arquivos_raw=arquivos_json,
+            preco=dados.preco if dados.a_venda else None,
+            a_venda=dados.a_venda,
+            permite_download=dados.permite_download,
         )
         postagem_criada = PostagemRepository.criar(db, nova_postagem, categoria_ids=categoria_ids)
 
@@ -286,6 +289,14 @@ class PostagemService:
             obra.legenda = dados.legenda
         if dados.arquivoUrl is not None:
             obra.arquivoUrl = dados.arquivoUrl
+        if dados.a_venda is not None:
+            obra.a_venda = dados.a_venda
+            if not dados.a_venda:
+                obra.preco = None
+        if dados.preco is not None and obra.a_venda:
+            obra.preco = dados.preco
+        if dados.permite_download is not None:
+            obra.permite_download = dados.permite_download
 
         postagem_atualizada = PostagemRepository.atualizar(db, obra, categoria_ids=categoria_ids)
 
@@ -358,3 +369,47 @@ class PostagemService:
             "total_comentarios": total_comentarios,
             "postagem_id": postagem_id
         }
+
+    @staticmethod
+    def alternar_fixar_obra(db: Session, postagem_id: int, usuario_id: int) -> Postagem:
+        """
+        Alterna a fixação de uma postagem no perfil do artista (Pin de até 3 postagens).
+        Ao fixar, atribui o timestamp atual (fixado_em) para ordenação LIFO no topo.
+        Invalida o cache de obras no Redis.
+        """
+        obra = PostagemRepository.buscar_por_id(db, postagem_id)
+        if not obra:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Obra não encontrada."
+            )
+
+        if obra.idUsuario != usuario_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Você só pode fixar postagens do seu próprio perfil."
+            )
+
+        # Se for fixar (atualmente não fixada)
+        if not obra.fixado:
+            total_fixadas = PostagemRepository.contar_fixadas(db, usuario_id)
+            if total_fixadas >= 3:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Você já atingiu o limite de 3 postagens fixadas. Desafixe uma para fixar outra."
+                )
+            obra.fixado = True
+            obra.fixado_em = datetime.now(timezone.utc)
+        else:
+            # Desafixar
+            obra.fixado = False
+            obra.fixado_em = None
+
+        db.commit()
+        db.refresh(obra)
+
+        # Invalida o cache de obras
+        redis_client.delete_pattern("artfolio:obras:*")
+
+        return obra
+

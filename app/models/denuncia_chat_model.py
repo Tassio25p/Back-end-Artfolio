@@ -1,3 +1,5 @@
+from app.models.conversa_model import Conversa
+from app.models.usuario_model import Usuario
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import String, Text, DateTime, ForeignKey, func
@@ -25,9 +27,9 @@ class DenunciaChat(Base):
     criado_em: Mapped[Optional[datetime]] = mapped_column("criado_em", DateTime, server_default=func.now())
 
     # Relacionamentos
-    denunciante: Mapped["Usuario"] = relationship("Usuario", foreign_keys=[denunciante_id], lazy="joined")
-    denunciado: Mapped["Usuario"] = relationship("Usuario", foreign_keys=[denunciado_id], lazy="joined")
-    conversa: Mapped["Conversa"] = relationship("Conversa", foreign_keys=[conversa_id], lazy="joined")
+    denunciante: Mapped[Usuario] = relationship(Usuario, foreign_keys=[denunciante_id], lazy="joined")
+    denunciado: Mapped[Usuario] = relationship(Usuario, foreign_keys=[denunciado_id], lazy="joined")
+    conversa: Mapped[Conversa] = relationship(Conversa, foreign_keys=[conversa_id], lazy="joined")
 
     def __repr__(self) -> str:
         return f"<DenunciaChat(id={self.id}, denunciante_id={self.denunciante_id}, denunciado_id={self.denunciado_id}, motivo='{self.motivo}')>"

@@ -2,6 +2,7 @@ import os
 import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, status, HTTPException, UploadFile, File, Request
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.config import settings
@@ -83,6 +84,76 @@ def obter_obra_por_id(
     client_ip = request.client.host if request.client else None
     return PostagemService.buscar_obra_por_id(db, id, usuario_atual_id=user_id, client_ip=client_ip)
 
+@router.get("/postagens/{id}/download", summary="Download do arquivo da obra")
+@router.get("/obras/{id}/download", summary="Download do arquivo da obra", include_in_schema=False)
+async def download_obra(
+    id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Realiza o download direto do arquivo original da obra caso o autor tenha habilitado 'permite_download'.
+    Retorna FileResponse (ou stream com application/octet-stream) configurando o filename para download.
+    """
+    obra = PostagemService.buscar_obra_por_id(db, id)
+    if not obra:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Obra não encontrada."
+        )
+
+    if not obra.permite_download:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Download não autorizado pelo autor."
+        )
+
+    url_arquivo = obra.arquivoUrl
+    extensao = os.path.splitext(url_arquivo.split("?")[0])[1] or ".png"
+    legenda_limpa = "".join(c for c in (obra.legenda or "obra") if c.isalnum() or c in ("-", "_")).strip()[:25]
+    nome_arquivo = f"artfolio_obra_{obra.id}_{legenda_limpa or 'arquivo'}{extensao}"
+
+    # 1. Se for arquivo armazenado localmente em /uploads/
+    if url_arquivo.startswith("/uploads/"):
+        relativo = url_arquivo[len("/uploads/"):]
+        caminho_local = os.path.join(settings.UPLOAD_DIR, relativo)
+        if os.path.exists(caminho_local):
+            return FileResponse(
+                path=caminho_local,
+                filename=nome_arquivo,
+                media_type="application/octet-stream"
+            )
+
+    # 2. Se for arquivo em disco com caminho absoluto existente
+    if os.path.exists(url_arquivo):
+        return FileResponse(
+            path=url_arquivo,
+            filename=nome_arquivo,
+            media_type="application/octet-stream"
+        )
+
+    # 3. Se for arquivo remoto (Cloudinary ou outra CDN)
+    if url_arquivo.startswith(("http://", "https://")):
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(url_arquivo)
+                resp.raise_for_status()
+                return Response(
+                    content=resp.content,
+                    media_type="application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'}
+                )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Falha ao transferir arquivo para download: {str(e)}"
+            )
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Arquivo físico não localizado para download."
+    )
+
 @router.post("/postagens", response_model=PostagemResposta, status_code=status.HTTP_201_CREATED, summary="Criar postagem")
 @router.post("/obras", response_model=PostagemResposta, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 def criar_postagem(
@@ -108,17 +179,29 @@ def atualizar_postagem(
     return PostagemService.atualizar_postagem(db, id, usuario_atual.id, dados)
 
 @router.post("/postagens/upload", status_code=status.HTTP_201_CREATED, summary="Fazer upload de imagem de obra")
-@limiter.limit("10/minute")
+@limiter.limit("20/minute")
 def upload_imagem_obra(
     request: Request,
     arquivo: UploadFile = File(...),
-    usuario_atual: Usuario = Depends(obter_usuario_atual)
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
 ):
     """
-    Recebe um arquivo de imagem (PNG, JPG, WEBP), faz upload para o Cloudinary e retorna a URL pública.
+    Recebe um arquivo de imagem (PNG, JPG, WEBP), valida limites de MB do plano sem compressão
+    e faz upload seguro preservando a qualidade 100% original.
     """
-    secure_url = MediaService.upload_imagem(arquivo, folder="artfolio/postagens")
-    return {"url": secure_url, "nome": arquivo.filename}
+    from app.services.plano_service import PlanoService
+    plano_tipo = PlanoService.obter_tipo_plano_usuario(db, usuario_atual.id)
+    
+    limites_por_plano = {
+        "Free": 10,
+        "Pro": 50,
+        "Boost": 100
+    }
+    max_mb = limites_por_plano.get(plano_tipo, 10)
+
+    secure_url = MediaService.upload_imagem(arquivo, folder="artfolio/postagens", max_size_mb=max_mb)
+    return {"url": secure_url, "nome": arquivo.filename, "limite_mb": max_mb}
 
 @router.delete("/postagens/{id}", status_code=status.HTTP_200_OK, summary="Excluir postagem")
 def deletar_postagem(
@@ -131,6 +214,20 @@ def deletar_postagem(
     """
     PostagemService.deletar_postagem(db, id, usuario_atual.id, usuario_atual.tipo_conta)
     return {"message": "Postagem removida com sucesso."}
+
+@router.patch("/postagens/{id}/fixar", response_model=PostagemResposta, status_code=status.HTTP_200_OK, summary="Fixar ou desafixar obra no perfil")
+@router.patch("/obras/{id}/fixar", response_model=PostagemResposta, status_code=status.HTTP_200_OK, include_in_schema=False)
+@router.post("/postagens/{id}/fixar", response_model=PostagemResposta, status_code=status.HTTP_200_OK, include_in_schema=False)
+@router.post("/obras/{id}/fixar", response_model=PostagemResposta, status_code=status.HTTP_200_OK, include_in_schema=False)
+def alternar_fixar_postagem(
+    id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Alterna o status de fixação (Pin de até 3 postagens) de uma obra no perfil do artista.
+    """
+    return PostagemService.alternar_fixar_obra(db, id, usuario_atual.id)
 
 
 # --- Endpoints de Curtidas (Likes) ---

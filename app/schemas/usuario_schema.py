@@ -1,3 +1,4 @@
+from app.schemas.seguidor_schema import RelacionamentoStatusResposta
 import re
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator, ConfigDict
 from typing import Optional, List
@@ -130,6 +131,14 @@ class UsuarioUpdateSchema(BaseModel):
         None,
         description="Ativar ou desativar a moldura de LED do plano ao redor do avatar"
     )
+    mostrar_badge_plano: Optional[bool] = Field(
+        None,
+        description="Ativar ou desativar a exibição do selo do plano no perfil público"
+    )
+    cor_led_hex: Optional[str] = Field(
+        None,
+        description="Cor personalizada em HEX para o LED do avatar (exclusivo Boost)"
+    )
     mensagem_cta: Optional[str] = Field(
         None,
         max_length=500,
@@ -230,43 +239,95 @@ class UsuarioResposta(BaseModel):
     ativo: bool = True
     suspenso_ate: Optional[datetime] = None
     mostrar_moldura_led: bool = True
+    mostrar_badge_plano: bool = True
+    cor_led_hex: Optional[str] = "#FF793F"
     mensagem_cta: Optional[str] = None
     plano: str = "Free"
+    is_verified: bool = False
     termoAceito: Optional[bool] = True
     dataAceiteTermo: Optional[datetime] = None
     versaoTermo: Optional[str] = "v1.0"
     dataCriacao: Optional[datetime] = Field(None, alias="dataCriacao")
     deletado: bool = False
 
-    @model_validator(mode="after")
-    def sincronizar_papel(self) -> "UsuarioResposta":
-        if not self.papel and self.tipo_conta:
-            self.papel = self.tipo_conta
-        elif not self.tipo_conta and self.papel:
-            self.tipo_conta = self.papel
-        return self
+    @field_validator("cpf", "cpf_cnpj", mode="before")
+    @classmethod
+    def descriptografar_documento(cls, v: Optional[str]) -> Optional[str]:
+        if v:
+            from app.core.security import descriptografar_dado
+            return descriptografar_dado(v)
+        return v
+
+    @field_validator("plano", mode="before")
+    @classmethod
+    def validar_plano_usuario(cls, v: Optional[str]) -> str:
+        return "Free" if not v else str(v)
+
+    @field_validator("tipo_conta", mode="before")
+    @classmethod
+    def validar_tipo_conta_usuario(cls, v: Optional[str]) -> str:
+        return "artista" if not v else str(v)
+
+    @field_validator("tipo_usuario", mode="before")
+    @classmethod
+    def validar_tipo_usuario_usuario(cls, v: Optional[str]) -> str:
+        return "PF" if not v else str(v)
+
+    @field_validator("ativo", "mostrar_moldura_led", "mostrar_badge_plano", mode="before")
+    @classmethod
+    def validar_booleanos_true_usuario(cls, v: Optional[bool]) -> bool:
+        return True if v is None else bool(v)
+
+    @field_validator("deletado", mode="before")
+    @classmethod
+    def validar_deletado_usuario(cls, v: Optional[bool]) -> bool:
+        return False if v is None else bool(v)
+
+    @field_validator("cor_led_hex", mode="before")
+    @classmethod
+    def validar_cor_led_hex_usuario(cls, v: Optional[str]) -> str:
+        return "#FF793F" if not v else str(v)
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
+
 class TokenResposta(BaseModel):
     """
-    Esquema retornado ao efetuar login com sucesso.
+    Schema de resposta para autenticação bem-sucedida (login / oauth).
     """
-    token_acesso: str = Field(..., alias="access_token")
-    tipo_token: str = Field("bearer", alias="token_type")
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
     usuario: UsuarioResposta
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(from_attributes=True)
 
-from app.schemas.seguidor_schema import RelacionamentoStatusResposta
+
+class TokenRefreshRequisicao(BaseModel):
+    """
+    Schema para requisição de renovação de token.
+    """
+    refresh_token: str = Field(..., description="Refresh token de longa duração")
+
+
+class TokenRefreshResposta(BaseModel):
+    """
+    Schema de resposta para token renovado com sucesso.
+    """
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 class PerfilPublicoResposta(BaseModel):
     """
-    Schema para dados públicos completos do perfil de um usuário.
+    Esquema para perfil público de artistas/usuários visualizado por terceiros.
     """
     id: int
     nome: str
-    email: Optional[str] = None
+    email: Optional[EmailStr] = None
     telefone: Optional[str] = None
     biografia: Optional[str] = None
     fotoPerfil: Optional[str] = Field(None, alias="fotoPerfil")
@@ -280,6 +341,8 @@ class PerfilPublicoResposta(BaseModel):
     tipo_conta: str = "artista"
     tipo_usuario: Optional[str] = "PF"
     mostrar_moldura_led: bool = True
+    mostrar_badge_plano: bool = True
+    cor_led_hex: Optional[str] = "#FF793F"
     mensagem_cta: Optional[str] = None
     plano: str = "Free"
     dataCriacao: Optional[datetime] = Field(None, alias="dataCriacao")
@@ -291,7 +354,38 @@ class PerfilPublicoResposta(BaseModel):
     visualizacoesTotais: int = 0
     relacionamento: RelacionamentoStatusResposta = Field(default_factory=RelacionamentoStatusResposta)
 
+    @field_validator("plano", mode="before")
+    @classmethod
+    def validar_plano_perfil(cls, v: Optional[str]) -> str:
+        return "Free" if not v else str(v)
+
+    @field_validator("tipo_conta", mode="before")
+    @classmethod
+    def validar_tipo_conta_perfil(cls, v: Optional[str]) -> str:
+        return "artista" if not v else str(v)
+
+    @field_validator("tipo_usuario", mode="before")
+    @classmethod
+    def validar_tipo_usuario_perfil(cls, v: Optional[str]) -> str:
+        return "PF" if not v else str(v)
+
+    @field_validator("mostrar_moldura_led", "mostrar_badge_plano", mode="before")
+    @classmethod
+    def validar_booleanos_true_perfil(cls, v: Optional[bool]) -> bool:
+        return True if v is None else bool(v)
+
+    @field_validator("cor_led_hex", mode="before")
+    @classmethod
+    def validar_cor_led_perfil(cls, v: Optional[str]) -> str:
+        return "#FF793F" if not v else str(v)
+
+    @field_validator("seguidoresCount", "seguindoCount", "obrasCount", "curtidasTotais", "visualizacoesTotais", mode="before")
+    @classmethod
+    def validar_contagens_perfil(cls, v: Optional[int]) -> int:
+        return 0 if v is None else int(v)
+
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
 
 class UsuarioItemBusca(BaseModel):
     id: int
@@ -300,5 +394,62 @@ class UsuarioItemBusca(BaseModel):
     tipo_conta: str = "artista"
     plano: str = "Free"
     mostrar_moldura_led: bool = True
+    mostrar_badge_plano: bool = True
+    cor_led_hex: Optional[str] = "#FF793F"
+
+    @field_validator("plano", mode="before")
+    @classmethod
+    def validar_plano_busca(cls, v: Optional[str]) -> str:
+        return "Free" if not v else str(v)
+
+    @field_validator("tipo_conta", mode="before")
+    @classmethod
+    def validar_tipo_conta_busca(cls, v: Optional[str]) -> str:
+        return "artista" if not v else str(v)
+
+    @field_validator("mostrar_moldura_led", "mostrar_badge_plano", mode="before")
+    @classmethod
+    def validar_booleanos_true_busca(cls, v: Optional[bool]) -> bool:
+        return True if v is None else bool(v)
+
+    @field_validator("cor_led_hex", mode="before")
+    @classmethod
+    def validar_cor_led_busca(cls, v: Optional[str]) -> str:
+        return "#FF793F" if not v else str(v)
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class VerificarEmailSchema(BaseModel):
+    """
+    Esquema para validação do código OTP de 6 dígitos enviado por e-mail via Brevo.
+    """
+    email: EmailStr
+    codigo: str = Field(..., min_length=6, max_length=6, description="Código de verificação OTP de 6 dígitos")
+
+
+class ReenviarCodigoSchema(BaseModel):
+    """
+    Esquema para solicitação de reenvio de código OTP para e-mails ainda não verificados.
+    """
+    email: EmailStr
+
+
+class RedefinirSenhaSchema(BaseModel):
+    """
+    Esquema para redefinição/atualização de senha via código OTP.
+    """
+    email: EmailStr
+    codigo: str = Field(..., min_length=6, max_length=6, description="Código OTP de 6 dígitos validado")
+    nova_senha: str = Field(..., min_length=6, max_length=100, description="Nova senha de acesso")
+    confirmacao_senha: Optional[str] = Field(None, description="Confirmação da nova senha (opcional)")
+
+
+class RegistroResposta(BaseModel):
+    """
+    Esquema de resposta retornado após o registo inicial do utilizador.
+    """
+    mensagem: str
+    email: str
+    is_verified: bool = False
+

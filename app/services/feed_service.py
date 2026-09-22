@@ -1,4 +1,4 @@
-from typing import List, Set
+from typing import List, Optional, Set
 from sqlalchemy.orm import Session
 from app.repositories.postagem_repository import PostagemRepository
 from app.repositories.curtida_repository import CurtidaRepository
@@ -16,19 +16,16 @@ class FeedService:
 
     Busca as postagens ativas ordenadas por data (mais recentes primeiro)
     e enriquece cada item com contagens de likes, comentários, seguidores,
-    carrossel de imagens, identidade de plano e destaque segmentado para o plano Boost.
+    carrossel de imagens e identidade visual do autor.
+    O feed é 100% orgânico e meritocrático, sem manipulação de visibilidade por planos pagos.
     """
 
     @staticmethod
-    def obter_feed(db: Session, usuario_id: int) -> List[FeedItemResposta]:
+    def obter_feed(db: Session, usuario_id: Optional[int] = None) -> List[FeedItemResposta]:
         """
-        Monta o feed cronológico para o usuário autenticado com priorização orgânica Boost.
+        Monta o feed cronológico e orgânico para o usuário autenticado ou visitante anônimo.
         """
-        # 1. Obter categorias de interesse do usuário atual
-        preferencias = db.query(PreferenciaUsuario).filter(PreferenciaUsuario.idUsuario == usuario_id).all()
-        ids_categorias_preferidas: Set[int] = {p.idCategoria for p in preferencias}
-
-        # 2. Buscar todas as postagens ativas
+        # 1. Buscar todas as postagens ativas
         postagens = PostagemRepository.listar_todas(db)
 
         # Cache local por artista para evitar queries repetidas
@@ -41,10 +38,10 @@ class FeedService:
             total_comentarios = ComentarioRepository.contar_por_postagem(db, postagem.id)
             total_seguidores = SeguidorRepository.contar_seguidores(db, postagem.idUsuario)
 
-            # Flags de interação do usuário autenticado
-            curtido = CurtidaRepository.buscar(db, usuario_id, postagem.id) is not None
-            seguindo = SeguidorRepository.buscar(db, usuario_id, postagem.idUsuario) is not None
-            salvo = ObraSalvaRepository.buscar(db, usuario_id, postagem.id) is not None
+            # Flags de interação do usuário autenticado (False caso anônimo)
+            curtido = CurtidaRepository.buscar(db, usuario_id, postagem.id) is not None if usuario_id else False
+            seguindo = SeguidorRepository.buscar(db, usuario_id, postagem.idUsuario) is not None if usuario_id else False
+            salvo = ObraSalvaRepository.buscar(db, usuario_id, postagem.id) is not None if usuario_id else False
 
             # Obter plano do autor
             if postagem.idUsuario not in planos_cache:
@@ -71,16 +68,7 @@ class FeedService:
                     nomeCategoria=postagem.categoria.nomeCategoria,
                 )
 
-            categorias_obra_ids = [cat.id for cat in postagem.categorias] if postagem.categorias else []
-            if postagem.idCategoria and postagem.idCategoria not in categorias_obra_ids:
-                categorias_obra_ids.append(postagem.idCategoria)
-
-            # Destaque Boost Segmentado (Não-Seguidores que consomem a categoria)
-            eh_boost = (plano_autor == "Boost")
-            consome_categoria = bool(ids_categorias_preferidas.intersection(categorias_obra_ids))
-            destaque_boost = eh_boost and (not seguindo) and consome_categoria
-
-            # Montar o item do feed
+            # Montar o item do feed puramente orgânico
             item = FeedItemResposta(
                 id=postagem.id,
                 legenda=postagem.legenda,
@@ -96,26 +84,8 @@ class FeedService:
                 curtido_por_mim=curtido,
                 seguindo_usuario=seguindo,
                 salvo_por_mim=salvo,
-                destaque_boost=destaque_boost,
+                destaque_boost=False,
             )
             feed_items.append(item)
 
-        # Priorização elegante: itens com destaque_boost sobem de forma justa e intercalada
-        destaques = [it for it in feed_items if it.destaque_boost]
-        organicos = [it for it in feed_items if not it.destaque_boost]
-
-        # Intercalar 1 destaque a cada 3 itens orgânicos
-        resultado_final = []
-        d_idx = 0
-        for i, org in enumerate(organicos):
-            if i > 0 and i % 3 == 0 and d_idx < len(destaques):
-                resultado_final.append(destaques[d_idx])
-                d_idx += 1
-            resultado_final.append(org)
-        
-        # Anexa restantes de destaques caso existam
-        while d_idx < len(destaques):
-            resultado_final.append(destaques[d_idx])
-            d_idx += 1
-
-        return resultado_final if resultado_final else feed_items
+        return feed_items

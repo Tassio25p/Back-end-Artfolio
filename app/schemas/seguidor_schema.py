@@ -32,7 +32,7 @@ class UsuarioRelacionamentoItem(BaseModel):
     """
     id: int
     nome: str
-    email: str
+    email: Optional[str] = None
     fotoPerfil: Optional[str] = None
     tipo_conta: str = "cliente"
     biografia: Optional[str] = None

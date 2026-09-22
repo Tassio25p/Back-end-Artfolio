@@ -1,4 +1,6 @@
-from datetime import datetime
+from app.models.postagem_model import Postagem
+from app.models.usuario_model import Usuario
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import String, Text, Boolean, DateTime, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -27,7 +29,7 @@ class Notificacao(Base):
     referencia_id: Mapped[Optional[int]] = mapped_column("referencia_id", nullable=True)
     link_acao: Mapped[Optional[str]] = mapped_column("link_acao", String(255), nullable=True)
     lida: Mapped[bool] = mapped_column(Boolean, default=False)
-    dataCriacao: Mapped[Optional[datetime]] = mapped_column("datacriacao", DateTime, server_default=func.now(), default=datetime.utcnow)
+    dataCriacao: Mapped[Optional[datetime]] = mapped_column("datacriacao", DateTime, server_default=func.now(), default=lambda: datetime.now(timezone.utc))
     deletado: Mapped[bool] = mapped_column(Boolean, default=False)
     dataDelecao: Mapped[Optional[datetime]] = mapped_column("datadelecao", DateTime, nullable=True)
 
@@ -38,9 +40,9 @@ class Notificacao(Base):
     criado_em = synonym("dataCriacao")
 
     # Relacionamentos para carregar dados do destinatário, remetente e postagem
-    usuario: Mapped["Usuario"] = relationship("Usuario", foreign_keys=[idUsuario], lazy="joined")
-    remetente: Mapped[Optional["Usuario"]] = relationship("Usuario", foreign_keys=[idRemetente], lazy="joined")
-    postagem: Mapped[Optional["Postagem"]] = relationship("Postagem", foreign_keys=[idPostagem], lazy="joined")
+    usuario: Mapped[Usuario] = relationship(Usuario, foreign_keys=[idUsuario], lazy="joined")
+    remetente: Mapped[Optional[Usuario]] = relationship(Usuario, foreign_keys=[idRemetente], lazy="joined")
+    postagem: Mapped[Optional[Postagem]] = relationship(Postagem, foreign_keys=[idPostagem], lazy="joined")
 
     @property
     def referencia_id_efetiva(self) -> Optional[int]:

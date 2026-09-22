@@ -8,7 +8,7 @@ class ArtistaResposta(BaseModel):
     """
     id: int
     nome: str
-    email: str
+    email: Optional[str] = None
     telefone: Optional[str] = None
     biografia: Optional[str] = None
     fotoPerfil: Optional[str] = Field(None, alias="fotoPerfil")
