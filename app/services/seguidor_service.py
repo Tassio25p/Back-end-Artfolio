@@ -55,10 +55,17 @@ class SeguidorService:
                 "total_seguidores": novo_total,
                 "mensagem": "Um usuário deixou de seguir você."
             }
+            publicado = False
             try:
-                redis_client.publish(f"notificacoes:{seguido_id}", json.dumps(payload_ws, ensure_ascii=False))
+                publicado = bool(redis_client.publish(f"notificacoes:{seguido_id}", json.dumps(payload_ws, ensure_ascii=False)))
             except Exception:
-                pass
+                publicado = False
+            if not publicado:
+                try:
+                    from app.core.websocket_manager import manager
+                    manager.dispatch_personal_message_sync(seguido_id, payload_ws)
+                except Exception:
+                    pass
 
             return {
                 "status": "sucesso",
@@ -109,10 +116,17 @@ class SeguidorService:
                 },
                 "naoLidasCount": NotificacaoService.contar_nao_lidas(db, seguido_id)
             }
+            publicado = False
             try:
-                redis_client.publish(f"notificacoes:{seguido_id}", json.dumps(payload_ws, ensure_ascii=False))
+                publicado = bool(redis_client.publish(f"notificacoes:{seguido_id}", json.dumps(payload_ws, ensure_ascii=False)))
             except Exception:
-                pass
+                publicado = False
+            if not publicado:
+                try:
+                    from app.core.websocket_manager import manager
+                    manager.dispatch_personal_message_sync(seguido_id, payload_ws)
+                except Exception:
+                    pass
 
             return {
                 "status": "sucesso",
@@ -185,6 +199,7 @@ class SeguidorService:
         Retorna a lista de pessoas que seguem o usuário alvo (target_id),
         enriquecida com flags de relacionamento em relação ao usuário logado (me_id).
         """
+        from app.services.plano_service import PlanoService
         relacoes = SeguidorRepository.listar_seguidores(db, target_id)
         itens = []
         for rel in relacoes:
@@ -193,6 +208,7 @@ class SeguidorService:
                 eu_sigo = SeguidorRepository.buscar(db, me_id, usr.id) is not None
                 ele_me_segue = SeguidorRepository.buscar(db, usr.id, me_id) is not None
                 is_me = (me_id == usr.id)
+                plano_usr = PlanoService.obter_tipo_plano_usuario(db, usr.id)
                 item = UsuarioRelacionamentoItem(
                     id=usr.id,
                     nome=usr.nome,
@@ -200,6 +216,10 @@ class SeguidorService:
                     fotoPerfil=usr.fotoPerfil,
                     tipo_conta=usr.tipo_conta,
                     biografia=usr.biografia,
+                    plano=plano_usr,
+                    mostrar_moldura_led=getattr(usr, "mostrar_moldura_led", True),
+                    mostrar_badge_plano=getattr(usr, "mostrar_badge_plano", True),
+                    cor_led_hex=getattr(usr, "cor_led_hex", "#E17055") or "#E17055",
                     seguindo=eu_sigo,
                     segueDeVolta=ele_me_segue,
                     isMe=is_me
@@ -213,6 +233,7 @@ class SeguidorService:
         Retorna a lista de pessoas que o usuário alvo (target_id) está seguindo,
         enriquecida com flags de relacionamento em relação ao usuário logado (me_id).
         """
+        from app.services.plano_service import PlanoService
         relacoes = SeguidorRepository.listar_seguindo(db, target_id)
         itens = []
         for rel in relacoes:
@@ -221,6 +242,7 @@ class SeguidorService:
                 eu_sigo = SeguidorRepository.buscar(db, me_id, usr.id) is not None
                 ele_me_segue = SeguidorRepository.buscar(db, usr.id, me_id) is not None
                 is_me = (me_id == usr.id)
+                plano_usr = PlanoService.obter_tipo_plano_usuario(db, usr.id)
                 item = UsuarioRelacionamentoItem(
                     id=usr.id,
                     nome=usr.nome,
@@ -228,6 +250,10 @@ class SeguidorService:
                     fotoPerfil=usr.fotoPerfil,
                     tipo_conta=usr.tipo_conta,
                     biografia=usr.biografia,
+                    plano=plano_usr,
+                    mostrar_moldura_led=getattr(usr, "mostrar_moldura_led", True),
+                    mostrar_badge_plano=getattr(usr, "mostrar_badge_plano", True),
+                    cor_led_hex=getattr(usr, "cor_led_hex", "#E17055") or "#E17055",
                     seguindo=eu_sigo,
                     segueDeVolta=ele_me_segue,
                     isMe=is_me

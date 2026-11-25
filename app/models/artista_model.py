@@ -11,4 +11,4 @@ from app.models.usuario_model import Usuario
 Artista = Usuario
 
 # Filtro padrão para consultas de artistas
-FILTRO_ARTISTA = Usuario.tipo_conta == "artista"
+FILTRO_ARTISTA = Usuario.tipo_conta.in_(["artista", "admin", "moderador"])

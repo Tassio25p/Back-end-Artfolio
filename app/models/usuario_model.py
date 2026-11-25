@@ -52,6 +52,8 @@ class Usuario(Base):
     mostrar_badge_plano: Mapped[bool] = mapped_column("mostrar_badge_plano", Boolean, default=True)
     cor_led_hex: Mapped[Optional[str]] = mapped_column("cor_led_hex", String(20), nullable=True, default="#FF793F")
     mensagem_cta: Mapped[Optional[str]] = mapped_column("mensagem_cta", Text, nullable=True)
+    comissoes_abertas: Mapped[bool] = mapped_column("comissoes_abertas", Boolean, default=True)
+    perfil_publico: Mapped[bool] = mapped_column("perfil_publico", Boolean, default=True, nullable=False)
 
     # Status de conta e moderação
     ativo: Mapped[bool] = mapped_column("ativo", Boolean, nullable=False, default=True)

@@ -72,6 +72,27 @@ def atualizar_perfil(
     return UsuarioService.atualizar_perfil(db, usuario_atual.id, dados)
 
 
+@router.patch(
+    "/me/comissoes",
+    status_code=status.HTTP_200_OK,
+    summary="Alternar status de comissões abertas do artista"
+)
+def alternar_status_comissoes(
+    status_comissao: Optional[bool] = Query(None, description="Definir explicitamente true ou false, ou omitir para inverter"),
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Permite ao artista abrir ou fechar suas comissões / encomendas com um único clique.
+    """
+    novo_status = UsuarioService.alternar_comissoes(db, usuario_atual.id, status_comissao)
+    return {
+        "sucesso": True,
+        "comissoes_abertas": novo_status,
+        "mensagem": "Comissões abertas para novos pedidos!" if novo_status else "Comissões pausadas temporariamente."
+    }
+
+
 @router.put(
     "/me/foto",
     response_model=UsuarioResposta,
@@ -189,6 +210,57 @@ def deixar_de_seguir_usuario(
     return SeguidorService.deixar_de_seguir(db, usuario_atual.id, id)
 
 
+from pydantic import BaseModel
+
+class PreferenciasPayload(BaseModel):
+    idCategorias: List[int]
+
+# --- Estatísticas Gerais da Plataforma (Landing Page Pública) ---
+@router.get(
+    "/estatisticas/gerais",
+    status_code=status.HTTP_200_OK,
+    summary="Obter contagens reais de artistas e obras para a Landing Page"
+)
+def obter_estatisticas_gerais(
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint público que retorna contagens reais do PostgreSQL para a tela inicial.
+    """
+    return UsuarioService.obter_estatisticas_gerais(db)
+
+
+@router.get(
+    "/me/preferencias",
+    status_code=status.HTTP_200_OK,
+    summary="Obter tópicos de interesse favoritos do usuário logado"
+)
+def obter_minhas_preferencias(
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna as categorias de interesse favoritadas pelo usuário logado.
+    """
+    return UsuarioService.obter_preferencias(db, usuario_atual.id)
+
+
+@router.put(
+    "/me/preferencias",
+    status_code=status.HTTP_200_OK,
+    summary="Salvar até 5 tópicos de interesse favoritos do usuário logado"
+)
+def salvar_minhas_preferencias(
+    payload: PreferenciasPayload,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Salva até 5 categorias de interesse para personalizar o feed (bolha).
+    """
+    return UsuarioService.salvar_preferencias(db, usuario_atual.id, payload.idCategorias)
+
+
 @router.get(
     "/{id}",
     response_model=PerfilPublicoResposta,
@@ -273,56 +345,4 @@ def obter_estatisticas_painel_usuario(
     """
     from app.services.estatistica_service import EstatisticaService
     return EstatisticaService.obter_painel_artista(db, id)
-
-
-# --- Preferências de Tópicos / Categorias do Usuário ---
-from pydantic import BaseModel
-
-class PreferenciasPayload(BaseModel):
-    idCategorias: List[int]
-
-@router.get(
-    "/me/preferencias",
-    status_code=status.HTTP_200_OK,
-    summary="Obter tópicos de interesse favoritos do usuário logado"
-)
-def obter_minhas_preferencias(
-    usuario_atual: Usuario = Depends(obter_usuario_atual),
-    db: Session = Depends(get_db)
-):
-    """
-    Retorna as categorias de interesse favoritadas pelo usuário logado.
-    """
-    return UsuarioService.obter_preferencias(db, usuario_atual.id)
-
-
-@router.put(
-    "/me/preferencias",
-    status_code=status.HTTP_200_OK,
-    summary="Salvar até 5 tópicos de interesse favoritos do usuário logado"
-)
-def salvar_minhas_preferencias(
-    payload: PreferenciasPayload,
-    usuario_atual: Usuario = Depends(obter_usuario_atual),
-    db: Session = Depends(get_db)
-):
-    """
-    Salva até 5 categorias de interesse para personalizar o feed (bolha).
-    """
-    return UsuarioService.salvar_preferencias(db, usuario_atual.id, payload.idCategorias)
-
-
-# --- Estatísticas Gerais da Plataforma (Landing Page Pública) ---
-@router.get(
-    "/estatisticas/gerais",
-    status_code=status.HTTP_200_OK,
-    summary="Obter contagens reais de artistas e obras para a Landing Page"
-)
-def obter_estatisticas_gerais(
-    db: Session = Depends(get_db)
-):
-    """
-    Endpoint público que retorna contagens reais do PostgreSQL para a tela inicial.
-    """
-    return UsuarioService.obter_estatisticas_gerais(db)
 

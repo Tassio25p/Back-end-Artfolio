@@ -18,11 +18,34 @@ class ConnectionManager:
 
     def __init__(self):
         self.active_connections: Dict[int, List[WebSocket]] = defaultdict(list)
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def set_loop(self, loop: asyncio.AbstractEventLoop):
+        self._loop = loop
 
     async def connect(self, websocket: WebSocket, user_id: int):
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
         await websocket.accept()
         self.active_connections[user_id].append(websocket)
         logger.info(f"[WebSocket] Usuário {user_id} conectado. Total de conexões ativas: {len(self.active_connections[user_id])}")
+
+    def dispatch_personal_message_sync(self, user_id: int, message: dict):
+        if not self.active_connections.get(user_id):
+            return
+        try:
+            running_loop = asyncio.get_running_loop()
+            running_loop.create_task(self.send_personal_message(user_id, message))
+            return
+        except RuntimeError:
+            pass
+        if self._loop and not self._loop.is_closed():
+            asyncio.run_coroutine_threadsafe(
+                self.send_personal_message(user_id, message),
+                self._loop,
+            )
 
     def disconnect(self, websocket: WebSocket, user_id: int):
         if user_id in self.active_connections:
@@ -108,12 +131,36 @@ async def iniciar_subscriber_redis():
                 logger.info("[Redis Pub/Sub] Tarefa cancelada graciosamente.")
                 break
             except Exception as conn_err:
+                if pubsub:
+                    try:
+                        if hasattr(pubsub, "aclose"):
+                            await pubsub.aclose()
+                        else:
+                            await pubsub.close()
+                    except Exception:
+                        pass
+                    pubsub = None
+                if client:
+                    try:
+                        await client.aclose()
+                    except Exception:
+                        pass
+                    client = None
                 logger.warning(f"[Redis Pub/Sub] Falha na conexão de mensageria: {conn_err}. Tentando reconectar em 5s...")
                 await asyncio.sleep(5)
 
     finally:
         # Garante o fechamento limpo das conexões com o Redis
         if pubsub:
-            await pubsub.close()
+            try:
+                if hasattr(pubsub, "aclose"):
+                    await pubsub.aclose()
+                else:
+                    await pubsub.close()
+            except Exception:
+                pass
         if client:
-            await client.aclose()
+            try:
+                await client.aclose()
+            except Exception:
+                pass

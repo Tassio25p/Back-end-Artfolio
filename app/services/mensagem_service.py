@@ -30,60 +30,106 @@ class MensagemService:
     def _montar_conversa_resposta(db: Session, conversa: Conversa, usuario_id: int) -> ConversaResposta:
         """
         Função auxiliar para construir o schema ConversaResposta a partir de um modelo Conversa,
-        carregando os dados do destinatário, mensagens ativas e a última mensagem visível.
+        carregando os dados dos participantes, mensagens ativas e a última mensagem visível.
+        Suporta tanto conversas diretas 1:1 quanto chats em grupo.
         """
-        participantes = ConversaRepository.buscar_participantes(db, conversa.id)
+        participantes_db = ConversaRepository.buscar_participantes(db, conversa.id)
         
-        # Identificar o outro participante (destinatário)
-        destinatario_id = None
-        for part in participantes:
-            if part.idUsuario != usuario_id:
-                destinatario_id = part.idUsuario
-                break
-        
-        # Se não houver outro participante (caso de borda), usa o próprio usuário
-        if destinatario_id is None:
-            destinatario_id = usuario_id
-
-        destinatario_schema = None
-        if destinatario_id:
-            destinatario_usuario = UsuarioRepository.buscar_por_id(db, destinatario_id)
-            if destinatario_usuario:
-                destinatario_schema = ConversaUsuarioResposta(
-                    id=destinatario_usuario.id,
-                    nome=destinatario_usuario.nome,
-                    fotoPerfil=destinatario_usuario.fotoPerfil,
-                    tipo_conta=getattr(destinatario_usuario, "tipo_conta", "artista")
+        participantes_schemas: List[ConversaUsuarioResposta] = []
+        usuarios_map = {}
+        from app.services.plano_service import PlanoService
+        planos_part_map = {}
+        for part in participantes_db:
+            u = UsuarioRepository.buscar_por_id(db, part.idUsuario)
+            if u:
+                usuarios_map[u.id] = u
+                plano_u = PlanoService.obter_tipo_plano_usuario(db, u.id)
+                planos_part_map[u.id] = plano_u
+                participantes_schemas.append(
+                    ConversaUsuarioResposta(
+                        id=u.id,
+                        nome=u.nome,
+                        fotoPerfil=u.fotoPerfil,
+                        tipo_conta=getattr(u, "tipo_conta", "artista"),
+                        plano=plano_u,
+                        mostrar_moldura_led=getattr(u, "mostrar_moldura_led", True),
+                        mostrar_badge_plano=getattr(u, "mostrar_badge_plano", True),
+                        cor_led_hex=getattr(u, "cor_led_hex", "#E17055") or "#E17055"
+                    )
                 )
+
+        is_grupo = getattr(conversa, "is_grupo", False)
+        nome_grupo = getattr(conversa, "nome_grupo", None)
+        admin_id = getattr(conversa, "admin_id", None)
+        destinatario_schema = None
+        foto_grupo = getattr(conversa, "foto_grupo", None)
+
+        if not is_grupo:
+            destinatario_id = None
+            for part in participantes_db:
+                if part.idUsuario != usuario_id:
+                    destinatario_id = part.idUsuario
+                    break
+            
+            if destinatario_id is None:
+                destinatario_id = usuario_id
+
+            if destinatario_id and destinatario_id in usuarios_map:
+                u = usuarios_map[destinatario_id]
+                destinatario_schema = ConversaUsuarioResposta(
+                    id=u.id,
+                    nome=u.nome,
+                    fotoPerfil=u.fotoPerfil,
+                    tipo_conta=getattr(u, "tipo_conta", "artista"),
+                    plano=planos_part_map.get(u.id, "Free"),
+                    mostrar_moldura_led=getattr(u, "mostrar_moldura_led", True),
+                    mostrar_badge_plano=getattr(u, "mostrar_badge_plano", True),
+                    cor_led_hex=getattr(u, "cor_led_hex", "#E17055") or "#E17055"
+                )
+        else:
+            # Para chat em grupo, sintetizar dados do grupo
+            destinatario_schema = ConversaUsuarioResposta(
+                id=conversa.id,
+                nome=nome_grupo or f"Grupo ({len(participantes_schemas)} participantes)",
+                fotoPerfil=foto_grupo,
+                tipo_conta="grupo"
+            )
 
         # Buscar mensagens ativas visíveis para este usuário
         mensagens_db = MensagemRepository.listar_mensagens_conversa(db, conversa.id, usuario_id)
-        mensagens_resposta = [
-            MensagemResposta(
-                id=msg.id,
-                idConversa=msg.idConversa,
-                idRemetente=msg.idRemetente,
-                conteudo=msg.conteudo,
-                arquivoUrl=msg.arquivoUrl,
-                dataEnvio=msg.dataEnvio,
-                deletado=msg.deletado,
-                enviado_por_mim=(msg.idRemetente == usuario_id),
-                lida=getattr(msg, "lida", False),
-                editado_em=getattr(msg, "editado_em", None),
-                deletado_em=getattr(msg, "deletado_em", None),
-                deletado_por_id=getattr(msg, "deletado_por_id", None)
+        mensagens_resposta = []
+        for msg in mensagens_db:
+            remetente_u = usuarios_map.get(msg.idRemetente) or UsuarioRepository.buscar_por_id(db, msg.idRemetente)
+            mensagens_resposta.append(
+                MensagemResposta(
+                    id=msg.id,
+                    idConversa=msg.idConversa,
+                    idRemetente=msg.idRemetente,
+                    remetente_nome=remetente_u.nome if remetente_u else f"Usuário #{msg.idRemetente}",
+                    remetente_foto=remetente_u.fotoPerfil if remetente_u else None,
+                    conteudo=msg.conteudo,
+                    arquivoUrl=msg.arquivoUrl,
+                    dataEnvio=msg.dataEnvio,
+                    deletado=msg.deletado,
+                    enviado_por_mim=(msg.idRemetente == usuario_id),
+                    lida=getattr(msg, "lida", False),
+                    editado_em=getattr(msg, "editado_em", None),
+                    deletado_em=getattr(msg, "deletado_em", None),
+                    deletado_por_id=getattr(msg, "deletado_por_id", None)
+                )
             )
-            for msg in mensagens_db
-        ]
 
         # Buscar última mensagem visível
         ultima_msg = MensagemRepository.buscar_ultima_mensagem(db, conversa.id, usuario_id)
         ultima_mensagem_resposta = None
         if ultima_msg:
+            remetente_ult = usuarios_map.get(ultima_msg.idRemetente) or UsuarioRepository.buscar_por_id(db, ultima_msg.idRemetente)
             ultima_mensagem_resposta = MensagemResposta(
                 id=ultima_msg.id,
                 idConversa=ultima_msg.idConversa,
                 idRemetente=ultima_msg.idRemetente,
+                remetente_nome=remetente_ult.nome if remetente_ult else f"Usuário #{ultima_msg.idRemetente}",
+                remetente_foto=remetente_ult.fotoPerfil if remetente_ult else None,
                 conteudo=ultima_msg.conteudo,
                 arquivoUrl=ultima_msg.arquivoUrl,
                 dataEnvio=ultima_msg.dataEnvio,
@@ -97,8 +143,13 @@ class MensagemService:
 
         return ConversaResposta(
             id=conversa.id,
+            is_grupo=is_grupo,
+            nome_grupo=nome_grupo,
+            foto_grupo=foto_grupo,
+            admin_id=admin_id,
             dataCriacao=conversa.dataCriacao,
             destinatario=destinatario_schema,
+            participantes=participantes_schemas,
             ultimaMensagem=ultima_mensagem_resposta,
             mensagens=mensagens_resposta
         )
@@ -127,6 +178,103 @@ class MensagemService:
 
         resultado.sort(key=obter_chave_ordenacao, reverse=True)
         return resultado
+
+    @staticmethod
+    def criar_conversa_grupo(db: Session, usuario_id: int, destinatarios_ids: List[int], nome_grupo: Optional[str] = None) -> ConversaResposta:
+        """
+        Cria uma nova conversa em grupo com até 12 pessoas (criador + até 11 convidados).
+        """
+        dest_filtrados = list(dict.fromkeys([d for d in destinatarios_ids if d and int(d) != int(usuario_id)]))
+        total_membros = len(dest_filtrados) + 1
+
+        if len(dest_filtrados) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Selecione pelo menos 1 contato para formar o grupo."
+            )
+
+        if total_membros > 12:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"O limite máximo de participantes por grupo é de 12 pessoas. Você selecionou {total_membros}."
+            )
+
+        # Validar se os usuários existem
+        for uid in dest_filtrados:
+            u = UsuarioRepository.buscar_por_id(db, uid)
+            if not u:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Participante ID #{uid} não foi encontrado."
+                )
+
+        conversa = ConversaRepository.criar_conversa_grupo(db, usuario_id, dest_filtrados, nome_grupo)
+        return MensagemService._montar_conversa_resposta(db, conversa, usuario_id)
+
+    @staticmethod
+    def atualizar_grupo(db: Session, usuario_id: int, conversa_id: int, nome_grupo: Optional[str] = None, foto_grupo: Optional[str] = None) -> ConversaResposta:
+        """
+        Atualiza o nome e/ou a foto do grupo (exclusivo para o Admin).
+        """
+        conversa = ConversaRepository.buscar_por_id(db, conversa_id)
+        if not conversa or not conversa.is_grupo:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grupo não encontrado.")
+        if conversa.admin_id != usuario_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Apenas o administrador do grupo pode alterar suas informações.")
+        conversa = ConversaRepository.atualizar_grupo(db, conversa_id, nome_grupo, foto_grupo)
+        return MensagemService._montar_conversa_resposta(db, conversa, usuario_id)
+
+    @staticmethod
+    def remover_membro_grupo(db: Session, admin_id: int, conversa_id: int, usuario_id_remover: int) -> ConversaResposta:
+        """
+        Remove um membro do grupo (exclusivo para o Admin).
+        """
+        conversa = ConversaRepository.buscar_por_id(db, conversa_id)
+        if not conversa or not conversa.is_grupo:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grupo não encontrado.")
+        if conversa.admin_id != admin_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Apenas o administrador pode remover participantes do grupo.")
+        if usuario_id_remover == admin_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="O administrador não pode se auto-remover. Use a opção de excluir o grupo.")
+        ConversaRepository.remover_participante_grupo(db, conversa_id, usuario_id_remover)
+        return MensagemService._montar_conversa_resposta(db, conversa, admin_id)
+
+    @staticmethod
+    def sair_do_grupo(db: Session, usuario_id: int, conversa_id: int) -> dict:
+        """
+        Permite que qualquer participante saia do grupo.
+        Se o administrador sair, transfere a liderança para outro membro ou exclui o grupo se ficar vazio.
+        """
+        conversa = ConversaRepository.buscar_por_id(db, conversa_id)
+        if not conversa or not conversa.is_grupo:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grupo não encontrado.")
+        if not ConversaRepository.usuario_participa(db, conversa_id, usuario_id):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Você não participa deste grupo.")
+        
+        participantes = [p for p in ConversaRepository.buscar_participantes(db, conversa_id) if p.idUsuario != usuario_id]
+        if conversa.admin_id == usuario_id:
+            if participantes:
+                conversa.admin_id = participantes[0].idUsuario
+                db.commit()
+            else:
+                ConversaRepository.excluir_grupo(db, conversa_id)
+                return {"message": "Você saiu e o grupo foi encerrado por não haver mais participantes."}
+
+        ConversaRepository.remover_participante_grupo(db, conversa_id, usuario_id)
+        return {"message": "Você saiu do grupo com sucesso."}
+
+    @staticmethod
+    def excluir_grupo(db: Session, admin_id: int, conversa_id: int) -> dict:
+        """
+        Exclui permanentemente o grupo e remove todos os participantes (exclusivo para o Admin).
+        """
+        conversa = ConversaRepository.buscar_por_id(db, conversa_id)
+        if not conversa or not conversa.is_grupo:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grupo não encontrado.")
+        if conversa.admin_id != admin_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Apenas o administrador pode excluir o grupo.")
+        ConversaRepository.excluir_grupo(db, conversa_id)
+        return {"message": "Grupo excluído com sucesso."}
 
     @staticmethod
     def obter_ou_criar_conversa(db: Session, usuario_id: int, destinatario_id: int) -> ConversaResposta:
@@ -237,22 +385,12 @@ class MensagemService:
         import json
         from app.redis_client import redis_client
         from app.core.websocket_manager import manager
+        from app.repositories.notificacao_repository import NotificacaoRepository
 
-        # 1. Emitir broadcast para as conexões ativas de AMBOS os participantes (remetente e destinatário)
-        for part in participantes:
-            canal = f"notificacoes:{part.idUsuario}"
-            try:
-                redis_client.publish(canal, json.dumps(evento_payload, ensure_ascii=False))
-            except Exception:
-                pass
-            try:
-                await manager.send_personal_message(part.idUsuario, evento_payload)
-            except Exception:
-                pass
-
-        # 2. Notificar destinatários via central de notificações persistida no banco
+        # 1. Persistir notificações dos destinatários antes do broadcast para contabilizar naoLidasCount real
         remetente_usuario = UsuarioRepository.buscar_por_id(db, remetente_id)
         nome_remetente = remetente_usuario.nome if remetente_usuario else "Um usuário"
+        foto_remetente = remetente_usuario.fotoPerfil if remetente_usuario else None
 
         texto_notificacao = conteudo_limpo if conteudo_limpo else "Enviou um anexo."
         if len(texto_notificacao) > 80:
@@ -269,8 +407,38 @@ class MensagemService:
                         mensagem=texto_notificacao,
                         id_remetente=remetente_id,
                         id_conversa=conversa_id,
-                        publicar_ws=False  # Já emitido via broadcast direto acima
+                        publicar_ws=False  # Emitido via broadcast direto abaixo
                     )
+                except Exception:
+                    pass
+
+        # 2. Emitir broadcast para as conexões ativas de AMBOS os participantes (remetente e destinatário)
+        for part in participantes:
+            payload_usuario = dict(evento_payload)
+            if part.idUsuario != remetente_id:
+                try:
+                    nao_lidas = NotificacaoRepository.contar_nao_lidas(db, part.idUsuario)
+                except Exception:
+                    nao_lidas = None
+                payload_usuario.update({
+                    "titulo": f"Nova mensagem de {nome_remetente}",
+                    "remetente": {
+                        "id": remetente_id,
+                        "nome": nome_remetente,
+                        "fotoPerfil": foto_remetente,
+                    },
+                    **({"naoLidasCount": nao_lidas} if isinstance(nao_lidas, int) else {}),
+                })
+
+            canal = f"notificacoes:{part.idUsuario}"
+            publicado = False
+            try:
+                publicado = bool(redis_client.publish(canal, json.dumps(payload_usuario, ensure_ascii=False)))
+            except Exception:
+                publicado = False
+            if not publicado:
+                try:
+                    await manager.send_personal_message(part.idUsuario, payload_usuario)
                 except Exception:
                     pass
 
@@ -278,6 +446,8 @@ class MensagemService:
             id=mensagem_salva.id,
             idConversa=mensagem_salva.idConversa,
             idRemetente=mensagem_salva.idRemetente,
+            remetente_nome=nome_remetente,
+            remetente_foto=remetente_usuario.fotoPerfil if remetente_usuario else None,
             conteudo=mensagem_salva.conteudo,
             arquivoUrl=mensagem_salva.arquivoUrl,
             dataEnvio=mensagem_salva.dataEnvio,

@@ -34,6 +34,8 @@ class TrendingService:
                     u.fotoperfil AS fotoperfilusuario,
                     u.tipo_conta,
                     u.mostrar_moldura_led,
+                    u.mostrar_badge_plano,
+                    u.cor_led_hex,
                     p.legenda,
                     p.arquivourl,
                     p.datapostagem,
@@ -74,7 +76,13 @@ class TrendingService:
         obras_trending: List[Dict[str, Any]] = []
 
         for row in resultados:
-            plano_tipo = row.plano_tipo or "gratuito"
+            plano_bruto = str(row.plano_tipo or "").strip().lower()
+            if "boost" in plano_bruto:
+                plano_tipo = "Boost"
+            elif "pro" in plano_bruto:
+                plano_tipo = "Pro"
+            else:
+                plano_tipo = "Free"
 
             categorias_lista = []
             if row.categorias_nomes:
@@ -94,14 +102,16 @@ class TrendingService:
                 "totalComentarios": int(row.totalcomentarios or 0),
                 "totalSalvos": int(row.totalsalvos or 0),
                 "score": float(row.score or 0.0),
-                "destaque_boost": str(plano_tipo).lower() == "boost",
+                "destaque_boost": plano_tipo == "Boost",
                 "usuario": {
                     "id": row.idusuario,
                     "nome": row.nomeusuario or "Artista",
                     "fotoPerfil": row.fotoperfilusuario,
                     "tipo_conta": row.tipo_conta or "artista",
                     "plano": plano_tipo,
-                    "mostrar_moldura_led": bool(row.mostrar_moldura_led)
+                    "mostrar_moldura_led": True if row.mostrar_moldura_led is None else bool(row.mostrar_moldura_led),
+                    "mostrar_badge_plano": True if row.mostrar_badge_plano is None else bool(row.mostrar_badge_plano),
+                    "cor_led_hex": row.cor_led_hex or "#E17055"
                 },
                 "categoria": categorias_lista[0] if categorias_lista else None,
                 "categorias": categorias_lista,

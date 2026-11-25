@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.mensagem_schema import (
     ConversaResposta,
+    ConversaCriar,
+    GrupoAtualizar,
     MensagemResposta,
     MensagemCriar,
     MensagemEditar,
@@ -30,6 +32,161 @@ def listar_conversas(
     Retorna a lista de todas as conversas ativas do usuário logado.
     """
     return MensagemService.listar_conversas(db, usuario_atual.id)
+
+@router.post("", response_model=ConversaResposta, status_code=status.HTTP_200_OK, summary="Criar conversa direta ou em grupo")
+@router.post("/", response_model=ConversaResposta, status_code=status.HTTP_200_OK, include_in_schema=False)
+def criar_conversa(
+    dados: ConversaCriar,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Cria ou recupera uma conversa direta 1:1 (se destinatario_id for informado)
+    ou cria um novo grupo de até 12 membros (se destinatarios_ids for informado).
+    """
+    if dados.destinatarios_ids:
+        return MensagemService.criar_conversa_grupo(
+            db, 
+            usuario_atual.id, 
+            dados.destinatarios_ids, 
+            dados.nome_grupo
+        )
+    elif dados.destinatario_id:
+        return MensagemService.obter_ou_criar_conversa(db, usuario_atual.id, dados.destinatario_id)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Informe destinatario_id para conversa direta ou destinatarios_ids para grupo."
+        )
+
+@router.post("/grupo", response_model=ConversaResposta, status_code=status.HTTP_201_CREATED, summary="Criar conversa em grupo (máx 12 pessoas)")
+def criar_conversa_grupo(
+    dados: ConversaCriar,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Cria uma nova conversa em grupo com até 12 participantes no total.
+    """
+    ids = dados.destinatarios_ids or ([dados.destinatario_id] if dados.destinatario_id else [])
+    return MensagemService.criar_conversa_grupo(
+        db,
+        usuario_atual.id,
+        ids,
+        dados.nome_grupo
+    )
+
+@router.patch("/{conversa_id}/grupo", response_model=ConversaResposta, status_code=status.HTTP_200_OK, summary="Atualizar informações do grupo (Admin)")
+def atualizar_grupo(
+    conversa_id: int,
+    dados: GrupoAtualizar,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Permite que o administrador do grupo atualize o nome e/ou a foto do grupo.
+    """
+    return MensagemService.atualizar_grupo(
+        db, 
+        usuario_atual.id, 
+        conversa_id, 
+        dados.nome_grupo, 
+        dados.foto_grupo
+    )
+
+@router.post("/{conversa_id}/foto", response_model=ConversaResposta, status_code=status.HTTP_200_OK, summary="Upload de foto/ícone do grupo (Admin)")
+def upload_foto_grupo(
+    conversa_id: int,
+    arquivo: UploadFile = File(...),
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Recebe imagem (JPG, JPEG, PNG, WEBP) para o avatar do grupo, converte e salva obrigatoriamente no formato JPEG.
+    """
+    import io
+    from PIL import Image
+
+    ext = os.path.splitext(arquivo.filename or "")[1].lower()
+    if ext not in [".jpg", ".jpeg", ".jpe", ".png", ".webp", ".bmp", ".jfif"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Formato de imagem inválido para o grupo. Use JPEG, JPG, JPE, PNG ou WEBP."
+        )
+
+    conteudo = arquivo.file.read()
+    if len(conteudo) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A foto do grupo deve ter no máximo 5 MB."
+        )
+
+    try:
+        imagem = Image.open(io.BytesIO(conteudo))
+        # Converter para RGB tratando transparências caso PNG/WEBP
+        if imagem.mode in ("RGBA", "LA", "P"):
+            fundo = Image.new("RGB", imagem.size, (255, 255, 255))
+            if imagem.mode == "P":
+                imagem = imagem.convert("RGBA")
+            fundo.paste(imagem, mask=imagem.split()[-1] if imagem.mode == "RGBA" else None)
+            imagem = fundo
+        elif imagem.mode != "RGB":
+            imagem = imagem.convert("RGB")
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Arquivo de imagem corrompido ou formato não suportado."
+        )
+
+    pasta_grupos = os.path.join(settings.UPLOAD_DIR, "conversas")
+    os.makedirs(pasta_grupos, exist_ok=True)
+    nome_salvo = f"grupo_{conversa_id}_{uuid.uuid4().hex[:8]}.jpeg"
+    caminho = os.path.join(pasta_grupos, nome_salvo)
+    
+    # Salvar sempre como JPEG com otimização
+    imagem.save(caminho, format="JPEG", quality=90, optimize=True)
+
+    url_foto = f"/uploads/conversas/{nome_salvo}"
+    return MensagemService.atualizar_grupo(
+        db,
+        usuario_atual.id,
+        conversa_id,
+        foto_grupo=url_foto
+    )
+
+@router.delete("/{conversa_id}/membros/{membro_id}", response_model=ConversaResposta, status_code=status.HTTP_200_OK, summary="Remover membro do grupo (Admin)")
+def remover_membro_grupo(
+    conversa_id: int,
+    membro_id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Remove um membro específico do grupo (exclusivo para o Admin).
+    """
+    return MensagemService.remover_membro_grupo(db, usuario_atual.id, conversa_id, membro_id)
+
+@router.post("/{conversa_id}/sair", status_code=status.HTTP_200_OK, summary="Sair do grupo")
+def sair_do_grupo(
+    conversa_id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Permite que o usuário logado saia do grupo.
+    """
+    return MensagemService.sair_do_grupo(db, usuario_atual.id, conversa_id)
+
+@router.delete("/{conversa_id}/grupo", status_code=status.HTTP_200_OK, summary="Excluir grupo (Admin)")
+def excluir_grupo(
+    conversa_id: int,
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+    db: Session = Depends(get_db)
+):
+    """
+    Exclui permanentemente o grupo de conversas (exclusivo para o Admin).
+    """
+    return MensagemService.excluir_grupo(db, usuario_atual.id, conversa_id)
 
 @router.post("/usuario/{destinatario_id}", response_model=ConversaResposta, status_code=status.HTTP_200_OK, summary="Obter ou iniciar conversa com usuário")
 def obter_ou_criar_conversa(

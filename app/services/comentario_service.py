@@ -80,10 +80,21 @@ class ComentarioService:
             },
             "naoLidasCount": NotificacaoService.contar_nao_lidas(db, postagem.idUsuario)
         }
+        publicado = False
         try:
-            redis_client.publish(f"notificacoes:{postagem.idUsuario}", json.dumps(payload_ws, ensure_ascii=False))
+            publicado = bool(redis_client.publish(f"notificacoes:{postagem.idUsuario}", json.dumps(payload_ws, ensure_ascii=False)))
         except Exception:
-            pass
+            publicado = False
+        if not publicado:
+            try:
+                from app.core.websocket_manager import manager
+                manager.dispatch_personal_message_sync(postagem.idUsuario, payload_ws)
+            except Exception:
+                pass
+
+        if comentario_salvo.usuario:
+            from app.services.plano_service import PlanoService
+            comentario_salvo.usuario.plano = PlanoService.obter_tipo_plano_usuario(db, comentario_salvo.usuario.id)
 
         return comentario_salvo
 
@@ -99,7 +110,12 @@ class ComentarioService:
                 detail="Postagem não encontrada."
             )
 
-        return ComentarioRepository.listar_por_postagem(db, postagem_id)
+        from app.services.plano_service import PlanoService
+        comentarios = ComentarioRepository.listar_por_postagem(db, postagem_id)
+        for c in comentarios:
+            if c.usuario:
+                c.usuario.plano = PlanoService.obter_tipo_plano_usuario(db, c.usuario.id)
+        return comentarios
 
     @staticmethod
     def deletar_comentario(
@@ -146,9 +162,16 @@ class ComentarioService:
                 "total_comentarios": total_comentarios,
                 "removido": True
             }
+            publicado = False
             try:
-                redis_client.publish(f"notificacoes:{postagem.idUsuario}", json.dumps(payload_ws, ensure_ascii=False))
+                publicado = bool(redis_client.publish(f"notificacoes:{postagem.idUsuario}", json.dumps(payload_ws, ensure_ascii=False)))
             except Exception:
-                pass
+                publicado = False
+            if not publicado:
+                try:
+                    from app.core.websocket_manager import manager
+                    manager.dispatch_personal_message_sync(postagem.idUsuario, payload_ws)
+                except Exception:
+                    pass
 
         return {"message": "Comentário excluído com sucesso.", "total_comentarios": total_comentarios}

@@ -79,10 +79,17 @@ class CurtidaService:
             },
             "naoLidasCount": NotificacaoService.contar_nao_lidas(db, postagem.idUsuario)
         }
+        publicado = False
         try:
-            redis_client.publish(f"notificacoes:{postagem.idUsuario}", json.dumps(payload_ws, ensure_ascii=False))
+            publicado = bool(redis_client.publish(f"notificacoes:{postagem.idUsuario}", json.dumps(payload_ws, ensure_ascii=False)))
         except Exception:
-            pass
+            publicado = False
+        if not publicado:
+            try:
+                from app.core.websocket_manager import manager
+                manager.dispatch_personal_message_sync(postagem.idUsuario, payload_ws)
+            except Exception:
+                pass
 
         return curtida_salva
 
@@ -116,9 +123,16 @@ class CurtidaService:
                 "total_curtidas": total_curtidas,
                 "curtido": False
             }
+            publicado = False
             try:
-                redis_client.publish(f"notificacoes:{postagem.idUsuario}", json.dumps(payload_ws, ensure_ascii=False))
+                publicado = bool(redis_client.publish(f"notificacoes:{postagem.idUsuario}", json.dumps(payload_ws, ensure_ascii=False)))
             except Exception:
-                pass
+                publicado = False
+            if not publicado:
+                try:
+                    from app.core.websocket_manager import manager
+                    manager.dispatch_personal_message_sync(postagem.idUsuario, payload_ws)
+                except Exception:
+                    pass
 
         return {"message": "Curtida removida com sucesso.", "total_curtidas": total_curtidas}

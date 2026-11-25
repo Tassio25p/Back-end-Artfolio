@@ -96,25 +96,41 @@ class EstatisticaService:
                 comentarios_obra = db.query(func.count(Comentario.id)).filter(
                     Comentario.idPostagem == o.id, Comentario.deletado == False
                 ).scalar() or 0
-                pontos = engajamento_obra + (curtidas_obra * 3) + (comentarios_obra * 2)
+                salvos_obra = db.query(func.count(ObraSalva.id)).filter(
+                    ObraSalva.idPostagem == o.id
+                ).scalar() or 0
+                pontos = engajamento_obra + (curtidas_obra * 4) + (salvos_obra * 3) + (comentarios_obra * 2)
 
                 for cat in o.categorias:
                     nome_cat = cat.nomeCategoria
                     if nome_cat not in categorias_engajamento:
                         categorias_engajamento[nome_cat] = {
                             "categoria": nome_cat,
+                            "nome": nome_cat,
                             "obras": 0,
+                            "totalObras": 0,
                             "curtidas": 0,
+                            "totalCurtidas": 0,
+                            "salvos": 0,
+                            "totalSalvos": 0,
                             "visualizacoes": 0,
+                            "totalVisualizacoes": 0,
                             "pontos": 0
                         }
                     categorias_engajamento[nome_cat]["obras"] += 1
+                    categorias_engajamento[nome_cat]["totalObras"] += 1
                     categorias_engajamento[nome_cat]["curtidas"] += curtidas_obra
+                    categorias_engajamento[nome_cat]["totalCurtidas"] += curtidas_obra
+                    categorias_engajamento[nome_cat]["salvos"] += salvos_obra
+                    categorias_engajamento[nome_cat]["totalSalvos"] += salvos_obra
                     categorias_engajamento[nome_cat]["visualizacoes"] += (o.visualizacoes or 0)
+                    categorias_engajamento[nome_cat]["totalVisualizacoes"] += (o.visualizacoes or 0)
                     categorias_engajamento[nome_cat]["pontos"] += pontos
 
             # Ordenar pelo engajamento e pegar top 3 (ouro, prata, bronze)
             ranking = sorted(categorias_engajamento.values(), key=lambda x: x["pontos"], reverse=True)
+            for idx, item in enumerate(ranking[:3]):
+                item["posicao"] = idx + 1
             podio_categorias = ranking[:3]
 
         # 2. Seguidores: Total, Novos na Semana, Novos no Mês

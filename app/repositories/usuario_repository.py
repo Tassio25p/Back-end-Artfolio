@@ -158,10 +158,10 @@ class UsuarioRepository:
     @staticmethod
     def listar_artistas(db: Session, busca: Optional[str] = None) -> List[Usuario]:
         """
-        Retorna a lista de usuários/artistas ativos (deletado == False).
+        Retorna a lista de usuários/artistas ativos e públicos (deletado == False, perfil_publico == True).
         Aplica filtro de busca case-insensitive por nome ou biografia se informado.
         """
-        query = db.query(Usuario).filter(Usuario.deletado == False)
+        query = db.query(Usuario).filter(Usuario.deletado == False, Usuario.perfil_publico == True)
         if busca and busca.strip():
             termo = f"%{busca.strip()}%"
             query = query.filter(

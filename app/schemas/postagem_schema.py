@@ -25,6 +25,8 @@ class PostagemUsuarioResumidoResposta(BaseModel):
     tipo_usuario: str = "artista"
     plano: Optional[str] = "Free"
     mostrar_moldura_led: bool = True
+    mostrar_badge_plano: bool = True
+    cor_led_hex: Optional[str] = "#E17055"
     total_seguidores: int = 0
     seguidores: int = 0
     usuario_seguindo: bool = False
@@ -173,6 +175,9 @@ class FeedUsuarioResposta(BaseModel):
     tipo_conta: str = "artista"
     plano: str = "Free"
     mostrar_moldura_led: bool = True
+    mostrar_badge_plano: bool = True
+    cor_led_hex: Optional[str] = "#E17055"
+    perfil_publico: bool = True
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

@@ -132,10 +132,17 @@ class NotificacaoService:
         # 5. Publicar evento no Redis Pub/Sub para entrega instantânea via WebSocket (se solicitado)
         if publicar_ws:
             canal = f"notificacoes:{id_usuario}"
+            publicado = False
             try:
-                redis_client.publish(canal, json.dumps(payload, ensure_ascii=False))
+                publicado = bool(redis_client.publish(canal, json.dumps(payload, ensure_ascii=False)))
             except Exception:
-                pass
+                publicado = False
+            if not publicado:
+                try:
+                    from app.core.websocket_manager import manager
+                    manager.dispatch_personal_message_sync(id_usuario, payload)
+                except Exception:
+                    pass
 
         return notificacao_salva
 

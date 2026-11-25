@@ -14,6 +14,11 @@ class ArtistaResposta(BaseModel):
     fotoPerfil: Optional[str] = Field(None, alias="fotoPerfil")
     portfolio: Optional[str] = None
     tipo_conta: str
+    comissoes_abertas: bool = True
+    plano: str = "Free"
+    mostrar_moldura_led: bool = True
+    mostrar_badge_plano: bool = True
+    cor_led_hex: Optional[str] = "#E17055"
     dataCriacao: Optional[datetime] = Field(None, alias="dataCriacao")
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

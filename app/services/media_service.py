@@ -273,6 +273,28 @@ class MediaService:
                 detail=f"O documento excede o tamanho máximo permitido de {max_size_mb}MB."
             )
 
+        # Sempre persiste cópia local para garantir visualização e download diretos sem bloqueio de PDF externo
+        nome_unico = f"{uuid.uuid4().hex}{ext}"
+        subpasta = folder.split("/")[-1] if "/" in folder else folder
+        pasta_destino = os.path.join(settings.UPLOAD_DIR, subpasta)
+        os.makedirs(pasta_destino, exist_ok=True)
+        caminho_arquivo = os.path.join(pasta_destino, nome_unico)
+        url_local = f"/uploads/{subpasta}/{nome_unico}"
+
+        try:
+            with open(caminho_arquivo, "wb") as f:
+                f.write(conteudo)
+        except Exception as e:
+            if ext == ".pdf":
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Falha ao salvar documento localmente: {str(e)}"
+                )
+
+        # Para arquivos PDF, servir sempre pelo endpoint local para suportar visualização inline e download direto
+        if ext == ".pdf":
+            return url_local
+
         tem_cloudinary = bool(
             cloudinary and
             settings.CLOUDINARY_CLOUD_NAME and
@@ -283,39 +305,24 @@ class MediaService:
         if tem_cloudinary:
             try:
                 init_cloudinary()
-                resource_type = "raw" if ext == ".pdf" else "image"
                 assert cloudinary is not None
                 resposta = cloudinary.uploader.upload(
                     conteudo,
                     folder=folder,
-                    resource_type=resource_type
+                    resource_type="image"
                 )
                 secure_url = resposta.get("secure_url")
-                if not secure_url:
-                    raise Exception("A resposta do Cloudinary não retornou a URL segura ('secure_url').")
-                return secure_url
-            except HTTPException:
-                raise
-            except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Falha ao realizar upload para o Cloudinary: {str(e)}"
-                )
-        else:
-            try:
-                nome_unico = f"{uuid.uuid4().hex}{ext}"
-                subpasta = folder.split("/")[-1] if "/" in folder else folder
-                pasta_destino = os.path.join(settings.UPLOAD_DIR, subpasta)
-                os.makedirs(pasta_destino, exist_ok=True)
+                if secure_url:
+                    return secure_url
+            except Exception:
+                pass
 
-                caminho_arquivo = os.path.join(pasta_destino, nome_unico)
-                with open(caminho_arquivo, "wb") as f:
-                    f.write(conteudo)
+        if os.path.exists(caminho_arquivo):
+            return url_local
 
-                return f"/uploads/{subpasta}/{nome_unico}"
-            except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Falha ao salvar documento localmente: {str(e)}"
-                )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Não foi possível armazenar o documento enviado."
+        )
+
 

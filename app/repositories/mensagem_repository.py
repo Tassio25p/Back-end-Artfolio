@@ -1,6 +1,6 @@
 from typing import Optional, List
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from app.models.mensagem_model import Mensagem
 
 class MensagemRepository:
@@ -18,7 +18,7 @@ class MensagemRepository:
         """
         return db.query(Mensagem).filter(
             Mensagem.id == mensagem_id,
-            Mensagem.deletado == False
+            or_(Mensagem.deletado == False, Mensagem.deletado.is_(None))
         ).first()
 
     @staticmethod
@@ -27,7 +27,7 @@ class MensagemRepository:
         Auxiliar que verifica se a mensagem foi ocultada pelo usuário específico
         através da coluna deletado_por (IDs separados por vírgula).
         """
-        if msg.deletado:
+        if msg.deletado is True:
             return True
         if not msg.deletadoPor:
             return False
@@ -44,7 +44,7 @@ class MensagemRepository:
             db.query(Mensagem)
             .filter(
                 Mensagem.idConversa == conversa_id,
-                Mensagem.deletado == False
+                or_(Mensagem.deletado == False, Mensagem.deletado.is_(None))
             )
             .order_by(Mensagem.dataEnvio.asc())
             .all()
@@ -60,7 +60,7 @@ class MensagemRepository:
             db.query(Mensagem)
             .filter(
                 Mensagem.idConversa == conversa_id,
-                Mensagem.deletado == False
+                or_(Mensagem.deletado == False, Mensagem.deletado.is_(None))
             )
             .order_by(Mensagem.dataEnvio.desc())
             .all()

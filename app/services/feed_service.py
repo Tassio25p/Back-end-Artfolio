@@ -33,6 +33,13 @@ class FeedService:
 
         feed_items = []
         for postagem in postagens:
+            if not postagem.usuario:
+                continue
+
+            # Se o autor configurou seu perfil como privado/não público, suas obras não aparecem no feed público para terceiros
+            if getattr(postagem.usuario, "perfil_publico", True) is False and (not usuario_id or postagem.idUsuario != usuario_id):
+                continue
+
             # Contagens
             total_likes = CurtidaRepository.contar_por_postagem(db, postagem.id)
             total_comentarios = ComentarioRepository.contar_por_postagem(db, postagem.id)
@@ -49,16 +56,17 @@ class FeedService:
             plano_autor = planos_cache[postagem.idUsuario]
 
             # Montar o schema do usuário autor
-            usuario_resp = None
-            if postagem.usuario:
-                usuario_resp = FeedUsuarioResposta(
-                    id=postagem.usuario.id,
-                    nome=postagem.usuario.nome,
-                    fotoPerfil=postagem.usuario.fotoPerfil,
-                    tipo_conta=postagem.usuario.tipo_conta,
-                    plano=plano_autor,
-                    mostrar_moldura_led=getattr(postagem.usuario, "mostrar_moldura_led", True)
-                )
+            usuario_resp = FeedUsuarioResposta(
+                id=postagem.usuario.id,
+                nome=postagem.usuario.nome,
+                fotoPerfil=postagem.usuario.fotoPerfil,
+                tipo_conta=postagem.usuario.tipo_conta,
+                plano=plano_autor,
+                mostrar_moldura_led=getattr(postagem.usuario, "mostrar_moldura_led", True),
+                mostrar_badge_plano=getattr(postagem.usuario, "mostrar_badge_plano", True),
+                cor_led_hex=getattr(postagem.usuario, "cor_led_hex", "#E17055") or "#E17055",
+                perfil_publico=getattr(postagem.usuario, "perfil_publico", True)
+            )
 
             # Montar o schema da categoria
             categoria_resp = None

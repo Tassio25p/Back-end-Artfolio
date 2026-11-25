@@ -1,5 +1,8 @@
 import os
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+load_dotenv()
 
 class Settings(BaseSettings):
     """
@@ -19,12 +22,12 @@ class Settings(BaseSettings):
     DB_HOST: str = "localhost"
     DB_PORT: str = "5432"
     DB_USER: str = "postgres"
-    DB_PASSWORD: str = "123456"
-    DB_NAME: str = "dbver"
+    DB_PASSWORD: str = "artfolio"
+    DB_NAME: str = "artfolio_tcc"
 
     # Configurações do Redis
-    REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 16379
+    REDIS_HOST: str = "127.0.0.1"
+    REDIS_PORT: int = 6379
     REDIS_PASSWORD: str = ""
     REDIS_DB: int = 0
 
@@ -54,9 +57,9 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:5173"
 
     # Configurações do Brevo (Envio Transacional de E-mail)
-    BREVO_API_KEY = os.getenv("BREVO_API_KEY")
-    BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL")
-    BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME")
+    BREVO_API_KEY: str | None = None
+    BREVO_SENDER_EMAIL: str | None = None
+    BREVO_SENDER_NAME: str | None = None
 
     # Configuração de leitura de arquivos .env
     model_config = SettingsConfigDict(
@@ -76,3 +79,5 @@ class Settings(BaseSettings):
 
 # Instância única para importação em todo o projeto
 settings = Settings()
+# Stripe & Brevo configurados
+

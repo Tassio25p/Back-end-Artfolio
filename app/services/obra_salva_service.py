@@ -5,6 +5,7 @@ from app.models.obra_salva_model import ObraSalva
 from app.repositories.obra_salva_repository import ObraSalvaRepository
 from app.repositories.postagem_repository import PostagemRepository
 from app.schemas.postagem_schema import PostagemResposta
+from app.services.plano_service import PlanoService
 
 
 class ObraSalvaService:
@@ -82,7 +83,13 @@ class ObraSalvaService:
         """
         salvos = ObraSalvaRepository.listar_por_usuario(db, usuario_id)
         postagens = []
+        planos_cache: Dict[int, str] = {}
         for s in salvos:
             if s.postagem and not s.postagem.deletado:
+                if s.postagem.usuario:
+                    autor_id = s.postagem.usuario.id
+                    if autor_id not in planos_cache:
+                        planos_cache[autor_id] = PlanoService.obter_tipo_plano_usuario(db, autor_id)
+                    s.postagem.usuario.plano = planos_cache[autor_id]
                 postagens.append(PostagemResposta.model_validate(s.postagem))
         return postagens

@@ -18,7 +18,7 @@ class UsuarioBase(BaseModel):
     portfolio: Optional[str] = Field(None, max_length=255, description="Link do portfólio do usuário")
     tipo_conta: str = Field("artista", description="Papel do usuário no sistema (padrão: 'artista')")
     termoAceito: bool = Field(False, description="Indica se o usuário aceitou os Termos e Condições")
-    versaoTermo: Optional[str] = Field("v1.0", description="Versão dos Termos aceita")
+    versaoTermo: Optional[str] = Field("v2.0", description="Versão dos Termos aceita")
 
     @field_validator("tipo_usuario")
     @classmethod
@@ -141,8 +141,12 @@ class UsuarioUpdateSchema(BaseModel):
     )
     mensagem_cta: Optional[str] = Field(
         None,
-        max_length=500,
+        max_length=3000,
         description="Mensagem padrão de encomenda/orçamento que abre no chat"
+    )
+    perfil_publico: Optional[bool] = Field(
+        None,
+        description="Ativar ou desativar o perfil público (quando falso, funciona como galeria pessoal privada)"
     )
 
     @field_validator("telefone")
@@ -242,11 +246,13 @@ class UsuarioResposta(BaseModel):
     mostrar_badge_plano: bool = True
     cor_led_hex: Optional[str] = "#FF793F"
     mensagem_cta: Optional[str] = None
+    comissoes_abertas: bool = True
+    perfil_publico: bool = True
     plano: str = "Free"
     is_verified: bool = False
     termoAceito: Optional[bool] = True
     dataAceiteTermo: Optional[datetime] = None
-    versaoTermo: Optional[str] = "v1.0"
+    versaoTermo: Optional[str] = "v2.0"
     dataCriacao: Optional[datetime] = Field(None, alias="dataCriacao")
     deletado: bool = False
 
@@ -344,6 +350,8 @@ class PerfilPublicoResposta(BaseModel):
     mostrar_badge_plano: bool = True
     cor_led_hex: Optional[str] = "#FF793F"
     mensagem_cta: Optional[str] = None
+    comissoes_abertas: bool = True
+    perfil_publico: bool = True
     plano: str = "Free"
     dataCriacao: Optional[datetime] = Field(None, alias="dataCriacao")
     

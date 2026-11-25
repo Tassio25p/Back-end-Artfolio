@@ -8,8 +8,8 @@ class AdminMetricasResposta(BaseModel):
     """
     obras_pendentes: int = Field(..., description="Obras com status 'quarentena' ou 'pendente'")
     denuncias_abertas: int = Field(..., description="Denúncias com status 'pendente'")
-    usuarios_sinalizados: int = Field(..., description="Quantidade de usuários denunciados")
-    logs_recentes: int = Field(0, description="Total de ações de moderação registradas nos últimos 7 dias")
+    usuarios_sinalizados: int = Field(..., description="Quantidade de usuários denunciados ou com infrações")
+    logs_recentes: int = Field(0, description="Total de ações de moderação registradas")
 
 class JulgarObraRequisicao(BaseModel):
     """
@@ -32,6 +32,22 @@ class AtualizarDenunciaRequisicao(BaseModel):
     """
     status: str = Field(..., description="'resolvida' ou 'descartada'")
     nota_moderador: Optional[str] = Field(None, description="Justificativa ou nota do moderador")
+
+class DesafioCriarRequisicao(BaseModel):
+    """
+    Requisição para criar um novo tema de Desafio Semanal.
+    """
+    nomeCategoria: str = Field(..., min_length=2, max_length=50, description="Nome do tema do desafio")
+    prazo_dias: int = Field(7, ge=1, le=365, description="Prazo de duração do desafio em dias")
+    ativar_agora: bool = Field(False, description="Se verdadeiro, torna este tema o desafio ativo imediatamente")
+
+class DesafioAtualizarRequisicao(BaseModel):
+    """
+    Requisição para editar nome ou prazo de um Desafio Semanal existente.
+    """
+    nomeCategoria: Optional[str] = Field(None, min_length=2, max_length=50, description="Novo nome do tema")
+    prazo_dias: Optional[int] = Field(None, ge=1, le=365, description="Novo prazo em dias")
+    reiniciar_prazo: bool = Field(False, description="Se verdadeiro, reinicia a contagem a partir de agora")
 
 class DenunciaChatResposta(BaseModel):
     id: int
@@ -107,6 +123,11 @@ class UsuarioSinalizadoResposta(BaseModel):
     email: Optional[str] = None
     fotoPerfil: Optional[str] = None
     total_denuncias: int = 0
+    total_denuncias_chat: int = 0
+    total_denuncias_obras: int = 0
+    obras_irregulares: int = 0
+    total_sancoes: int = 0
+    motivos_sinalizacao: List[str] = []
     ativo: bool = True
     suspenso_ate: Optional[datetime] = None
     papel: str = "artista"

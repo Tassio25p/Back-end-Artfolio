@@ -18,6 +18,17 @@ class PlanoService:
         return [PlanoResposta.model_validate(p) for p in planos]
 
     @staticmethod
+    def _is_expirada(data_fim: Optional[datetime]) -> bool:
+        if not data_fim:
+            return False
+        agora = datetime.now(timezone.utc)
+        if data_fim.tzinfo is None:
+            data_fim_aware = data_fim.replace(tzinfo=timezone.utc)
+        else:
+            data_fim_aware = data_fim
+        return data_fim_aware < agora
+
+    @staticmethod
     def obter_tipo_plano_usuario(db: Session, usuario_id: int) -> str:
         """
         Retorna a string do tipo do plano ativo ('Free', 'Pro' ou 'Boost').
@@ -31,10 +42,16 @@ class PlanoService:
                 Assinatura.deletado == False,
                 Plano.deletado == False
             )
+            .order_by(Assinatura.id.desc())
             .first()
         )
 
         if not assinatura_ativa or not assinatura_ativa.plano:
+            return "Free"
+
+        if PlanoService._is_expirada(assinatura_ativa.dataFim):
+            assinatura_ativa.ativa = False
+            db.commit()
             return "Free"
 
         tipo = assinatura_ativa.plano.tipo.strip().lower()
@@ -59,8 +76,7 @@ class PlanoService:
             .first()
         )
 
-        agora = datetime.now(timezone.utc)
-        if assinatura_ativa and assinatura_ativa.dataFim and assinatura_ativa.dataFim < agora:
+        if assinatura_ativa and PlanoService._is_expirada(assinatura_ativa.dataFim):
             assinatura_ativa.ativa = False
             db.commit()
             assinatura_ativa = None

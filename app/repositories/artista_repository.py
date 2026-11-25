@@ -5,7 +5,7 @@ from app.models.usuario_model import Usuario
 class ArtistaRepository:
     """
     Repositório de dados para consultas de Artistas.
-    Artista é um Usuário com tipo_conta = 'artista'.
+    Artista é um Usuário com tipo_conta = 'artista' (ou 'admin'/'moderador').
     """
 
     @staticmethod
@@ -14,7 +14,7 @@ class ArtistaRepository:
         Lista todos os artistas ativos no sistema.
         """
         return db.query(Usuario).filter(
-            Usuario.tipo_conta == "artista",
+            Usuario.tipo_conta.in_(["artista", "admin", "moderador"]),
             Usuario.deletado == False
         ).order_by(Usuario.nome).all()
 
@@ -25,7 +25,7 @@ class ArtistaRepository:
         """
         return db.query(Usuario).filter(
             Usuario.id == artista_id,
-            Usuario.tipo_conta == "artista",
+            Usuario.tipo_conta.in_(["artista", "admin", "moderador"]),
             Usuario.deletado == False
         ).first()
 
@@ -35,7 +35,7 @@ class ArtistaRepository:
         Busca artistas ativos pelo nome (busca parcial, case-insensitive).
         """
         return db.query(Usuario).filter(
-            Usuario.tipo_conta == "artista",
+            Usuario.tipo_conta.in_(["artista", "admin", "moderador"]),
             Usuario.deletado == False,
             Usuario.nome.ilike(f"%{nome}%")
         ).order_by(Usuario.nome).all()

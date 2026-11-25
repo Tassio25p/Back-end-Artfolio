@@ -118,7 +118,10 @@ class UsuarioService:
             portfolio=dados.portfolio,
             tipo_conta=dados.tipo_conta,
             codigo_verificacao=codigo_otp,
-            is_verified=False
+            is_verified=True,
+            termoAceito=dados.termoAceito if hasattr(dados, 'termoAceito') and dados.termoAceito is not None else True,
+            dataAceiteTermo=datetime.now(timezone.utc),
+            versaoTermo=getattr(dados, 'versaoTermo', None) or "v2.0"
         )
 
         # 8. Salvar no banco usando o repositório
@@ -374,33 +377,39 @@ class UsuarioService:
 
         # 5. Verificar se a conta tem e-mail verificado (is_verified)
         if not usuario.is_verified:
-            # Gerar e reenviar automaticamente um novo código OTP via Brevo para facilitar o acesso
-            try:
-                novo_otp = gerar_codigo_otp(6)
-                usuario.codigo_verificacao = novo_otp
+            if settings.DEBUG:
+                usuario.is_verified = True
+                usuario.codigo_verificacao = None
                 db.commit()
                 db.refresh(usuario)
+            else:
+                # Gerar e reenviar automaticamente um novo código OTP via Brevo para facilitar o acesso
+                try:
+                    novo_otp = gerar_codigo_otp(6)
+                    usuario.codigo_verificacao = novo_otp
+                    db.commit()
+                    db.refresh(usuario)
 
-                destinatario = str(usuario.email or dados.email)
-                enviar_email_otp(
-                    destinatario_email=destinatario,
-                    destinatario_nome=usuario.nome,
-                    codigo_otp=novo_otp
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Erro ao disparar OTP automático via Brevo no login para {usuario.email}: {e}"
-                )
+                    destinatario = str(usuario.email or dados.email)
+                    enviar_email_otp(
+                        destinatario_email=destinatario,
+                        destinatario_nome=usuario.nome,
+                        codigo_otp=novo_otp
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Erro ao disparar OTP automático via Brevo no login para {usuario.email}: {e}"
+                    )
 
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "detail": "E-mail não verificado",
-                    "mensagem": "A sua conta ainda não foi ativada. Enviamos um novo código de verificação para o seu e-mail.",
-                    "nao_verificado": True,
-                    "email": usuario.email or dados.email
-                }
-            )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "detail": "E-mail não verificado",
+                        "mensagem": "A sua conta ainda não foi ativada. Enviamos um novo código de verificação para o seu e-mail.",
+                        "nao_verificado": True,
+                        "email": usuario.email or dados.email
+                    }
+                )
 
         # 6. Gerar os tokens JWT de acesso (30 min) e refresh (7 dias)
         token_data = {
@@ -484,7 +493,10 @@ class UsuarioService:
                 fotoPerfil=foto_perfil,
                 tipo_conta="artista",
                 is_verified=True,
-                codigo_verificacao=None
+                codigo_verificacao=None,
+                termoAceito=True,
+                dataAceiteTermo=datetime.now(timezone.utc),
+                versaoTermo="v2.0"
             )
             usuario = UsuarioRepository.salvar(db, novo_usuario)
 
@@ -581,16 +593,20 @@ class UsuarioService:
         usuario.trajetoria = None
         usuario.especializacoes = None
         usuario.certificados = None
+        usuario.codigo_verificacao = None
         usuario.senha = None
 
-        # 3. Marcar postagens como deletadas
+        # 3. Marcar postagens como deletadas e persistir alterações
         from app.models.postagem_model import Postagem
-        db.query(Postagem).filter(Postagem.idUsuario == usuario_id).update({
-            "deletado": True,
-            "dataDelecao": datetime.now(timezone.utc)
-        })
-
-        UsuarioRepository.atualizar_usuario(db, usuario)
+        try:
+            db.query(Postagem).filter(Postagem.idUsuario == usuario_id).update({
+                "deletado": True,
+                "dataDelecao": datetime.now(timezone.utc)
+            })
+            UsuarioRepository.atualizar_usuario(db, usuario)
+        except Exception:
+            db.rollback()
+            raise
 
         # 4. Invalidar caches no Redis
         redis_client.delete(f"artfolio:perfil:{usuario_id}")
@@ -889,6 +905,9 @@ class UsuarioService:
         if not usuario:
             return None
 
+        from app.services.plano_service import PlanoService
+        usuario.plano = PlanoService.obter_tipo_plano_usuario(db, usuario_id)
+
         try:
             dados_dict = UsuarioResposta.model_validate(usuario).model_dump(mode="json")
             redis_client.set(cache_key, json.dumps(dados_dict), expira_segundos=300)
@@ -927,6 +946,41 @@ class UsuarioService:
         from app.services.plano_service import PlanoService
         plano_tipo = PlanoService.obter_tipo_plano_usuario(db, target_id)
 
+        is_owner = (me_id is not None and me_id == target_id)
+        is_public = getattr(usuario, "perfil_publico", True)
+
+        if not is_public and not is_owner:
+            # Perfil Privado: protegido/anonimizado para terceiros e visitantes
+            return PerfilPublicoResposta(
+                id=usuario.id,
+                nome=usuario.nome,
+                email=None,
+                telefone=None,
+                biografia=None,
+                fotoPerfil=usuario.fotoPerfil,
+                portfolio=None,
+                instagram=None,
+                behance=None,
+                website=None,
+                trajetoria=None,
+                especializacoes=None,
+                certificados=None,
+                tipo_conta=usuario.tipo_conta,
+                tipo_usuario=usuario.tipo_usuario,
+                mostrar_moldura_led=getattr(usuario, "mostrar_moldura_led", True),
+                mostrar_badge_plano=getattr(usuario, "mostrar_badge_plano", True),
+                cor_led_hex=getattr(usuario, "cor_led_hex", "#FF793F") or "#FF793F",
+                mensagem_cta=None,
+                comissoes_abertas=False,
+                perfil_publico=False,
+                plano=plano_tipo,
+                dataCriacao=usuario.dataCriacao,
+                seguidoresCount=seguidores_cnt,
+                seguindoCount=seguindo_cnt,
+                obrasCount=0,
+                relacionamento=rel_status
+            )
+
         return PerfilPublicoResposta(
             id=usuario.id,
             nome=usuario.nome,
@@ -947,6 +1001,8 @@ class UsuarioService:
             mostrar_badge_plano=getattr(usuario, "mostrar_badge_plano", True),
             cor_led_hex=getattr(usuario, "cor_led_hex", "#FF793F") or "#FF793F",
             mensagem_cta=getattr(usuario, "mensagem_cta", None),
+            comissoes_abertas=getattr(usuario, "comissoes_abertas", True) if getattr(usuario, "comissoes_abertas", True) is not None else True,
+            perfil_publico=is_public,
             plano=plano_tipo,
             dataCriacao=usuario.dataCriacao,
             seguidoresCount=seguidores_cnt,
@@ -1000,11 +1056,42 @@ class UsuarioService:
                 "tipo_conta": u.tipo_conta,
                 "plano": plano_tipo,
                 "mostrar_moldura_led": getattr(u, "mostrar_moldura_led", True),
+                "mostrar_badge_plano": getattr(u, "mostrar_badge_plano", True),
+                "cor_led_hex": getattr(u, "cor_led_hex", "#E17055") or "#E17055",
                 "te_segue": te_segue,
                 "segue_voce": te_segue,
                 "is_seguidor": te_segue
             })
         return resultado
+
+    @staticmethod
+    def alternar_comissoes(db: Session, usuario_id: int, status_comissao: Optional[bool] = None) -> bool:
+        """
+        Alterna ou define o status de comissões abertas do usuário.
+        """
+        usuario = db.query(Usuario).filter(Usuario.id == usuario_id, Usuario.deletado == False).first()
+        if not usuario:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuário não encontrado."
+            )
+        
+        if status_comissao is not None:
+            usuario.comissoes_abertas = bool(status_comissao)
+        else:
+            atual = getattr(usuario, "comissoes_abertas", True)
+            usuario.comissoes_abertas = not bool(atual if atual is not None else True)
+        
+        db.commit()
+        db.refresh(usuario)
+
+        try:
+            from app.redis_client import redis_client
+            redis_client.delete(f"artfolio:perfil:{usuario_id}")
+        except Exception:
+            pass
+
+        return bool(usuario.comissoes_abertas)
 
     @staticmethod
     def alternar_seguir(db: Session, seguidor_id: int, seguido_id: int) -> dict:

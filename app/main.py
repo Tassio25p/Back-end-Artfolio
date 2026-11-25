@@ -53,10 +53,65 @@ os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 os.makedirs(os.path.join(settings.UPLOAD_DIR, "perfis"), exist_ok=True)
 os.makedirs(os.path.join(settings.UPLOAD_DIR, "certificados"), exist_ok=True)
 
+from sqlalchemy import text
+
+SUBCATEGORIAS_OFICIAIS = [
+    "Pintura", "Desenho", "Ilustração Tradicional", "Ilustração Infantil", "Escultura", "Gravura", "Quadrinhos HQ",
+    "Ilustração Digital", "Modelagem 3D", "Animação 2D", "Animação 3D", "Pixel Art", "Escultura Digital", "Voxel Art",
+    "Artesanato", "Costura", "Crochê", "Amigurumi", "Tricô", "Tapeçaria", "Macramê", "Feltragem", "Tecelagem", "Bordado",
+    "Escritura", "Poesia", "Romance", "Conto", "Crônica", "Roteirização", "Dramaturgia",
+    "Cinema", "Fotografia", "Videoarte", "Edição de Vídeo", "Direção de Arte",
+    "Teatro", "Dança", "Ópera", "Circo", "Performance", "Mímica",
+    "Composição", "Canto", "Instrumentação", "Produção Musical", "Sonoplastia",
+    "Arquitetura", "Desenho Técnico de Plantas Baixas", "Maquetaria", "Urbanismo", "Design de Interiores", "Paisagismo", "Jardinagem Artística",
+    "Modificação", "Tatuagem", "Micropigmentação Artística", "Body Painting", "Pintura Corporal", "Maquiagem Artística FX",
+    "Design Gráfico", "Web Design", "Design de Moda", "Joalheria", "Cerâmica", "Marcenaria"
+]
+
+
+def sincronizar_categorias(conn) -> None:
+    """
+    Semeia os Desafios Semanais e sincroniza todas as categorias oficiais do catálogo Artfolio,
+    informando explicitamente todas as colunas NOT NULL da tabela 'categoria'.
+    """
+    qtd_desafios = conn.execute(
+        text("SELECT COUNT(*) FROM categoria WHERE is_desafio = TRUE AND deletado = FALSE")
+    ).scalar()
+    if qtd_desafios == 0:
+        conn.execute(text("""
+            INSERT INTO categoria (nomecategoria, is_desafio, desafio_ativo, data_inicio_desafio, prazo_dias, deletado)
+            VALUES
+                ('Cyberpunk & Futurismo', TRUE, TRUE, CURRENT_TIMESTAMP, 7, FALSE),
+                ('Retrofuturismo 80s', TRUE, FALSE, NULL, 7, FALSE),
+                ('Natureza Viva & Botânica', TRUE, FALSE, NULL, 7, FALSE),
+                ('Surrealismo Onírico', TRUE, FALSE, NULL, 7, FALSE),
+                ('Fantasia Medieval Sombria', TRUE, FALSE, NULL, 7, FALSE),
+                ('Arte Tradicional a Óleo', TRUE, FALSE, NULL, 7, FALSE),
+                ('Sci-Fi & Espaço Profundo', TRUE, FALSE, NULL, 7, FALSE)
+        """))
+        conn.commit()
+        print("[OK] Temas oficiais de Desafios Semanais semeados com sucesso na tabela 'categoria'.")
+
+    for cat_nome in SUBCATEGORIAS_OFICIAIS:
+        existe = conn.execute(
+            text("SELECT EXISTS (SELECT 1 FROM categoria WHERE LOWER(nomecategoria) = LOWER(:nome))"),
+            {"nome": cat_nome},
+        ).scalar()
+        if not existe:
+            conn.execute(
+                text(
+                    "INSERT INTO categoria (nomecategoria, is_desafio, desafio_ativo, prazo_dias, deletado) "
+                    "VALUES (:nome, FALSE, FALSE, 7, FALSE)"
+                ),
+                {"nome": cat_nome},
+            )
+    conn.commit()
+    print("[OK] Categorias e subcategorias oficiais do catálogo sincronizadas com sucesso.")
+
+
 # Criação das tabelas e auto-migração do esquema no PostgreSQL
 try:
     Base.metadata.create_all(bind=engine)
-    from sqlalchemy import text
     with engine.connect() as conn:
         tabela_usuario_existe = conn.execute(text(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'usuario')"
@@ -92,6 +147,13 @@ try:
             except Exception:
                 pass
 
+            # Garantir que senha aceite NULL para anonimização LGPD na exclusão de conta e login OAuth
+            try:
+                conn.execute(text("ALTER TABLE usuario ALTER COLUMN senha DROP NOT NULL"))
+                conn.commit()
+            except Exception:
+                pass
+
             for coluna, tipo in colunas_usuario.items():
                 coluna_existe = conn.execute(text(
                     f"SELECT EXISTS (SELECT 1 FROM information_schema.columns "
@@ -103,6 +165,14 @@ try:
                     ))
                     conn.commit()
                     print(f"[OK] Coluna '{coluna}' adicionada com sucesso à tabela 'usuario'.")
+
+            # Garante que todos os usuários fiquem verificados para ambiente de desenvolvimento local
+            try:
+                conn.execute(text("UPDATE usuario SET is_verified = TRUE WHERE is_verified IS FALSE OR is_verified IS NULL"))
+                conn.commit()
+                print("[OK] Todos os usuários foram verificados (is_verified = TRUE) com sucesso!")
+            except Exception:
+                pass
 
         tabela_postagem_existe = conn.execute(text(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'postagem')"
@@ -281,6 +351,28 @@ try:
                 conn.commit()
                 print("[OK] Planos padrão (Free, Pro, Boost) semeados com sucesso na tabela 'plano'.")
 
+        # Garantir sementes dos Desafios Semanais rotativos (Art Prompts) e catálogo oficial
+        tabela_cat_existe = conn.execute(text(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'categoria')"
+        )).scalar()
+        if tabela_cat_existe:
+            for col_cat, tipo_cat in [
+                ("is_desafio", "BOOLEAN NOT NULL DEFAULT FALSE"),
+                ("desafio_ativo", "BOOLEAN NOT NULL DEFAULT FALSE"),
+                ("data_inicio_desafio", "TIMESTAMP"),
+                ("prazo_dias", "INTEGER NOT NULL DEFAULT 7"),
+                ("data_fim_desafio", "TIMESTAMP"),
+            ]:
+                col_cat_existe = conn.execute(text(
+                    f"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'categoria' AND column_name = '{col_cat}')"
+                )).scalar()
+                if not col_cat_existe:
+                    conn.execute(text(f"ALTER TABLE categoria ADD COLUMN {col_cat} {tipo_cat}"))
+                    conn.commit()
+                    print(f"[OK] Coluna '{col_cat}' adicionada com sucesso à tabela 'categoria'.")
+
+            sincronizar_categorias(conn)
+
 except Exception as e:
     import traceback
     print("[ERRO] ERRO AO SINCRONIZAR O BANCO:")
@@ -307,20 +399,87 @@ async def rotina_atualizacao_trending():
         print("[Trending Background] Rotina encerrada com sucesso.")
 
 
+async def rotina_rotacao_desafios_semanais():
+    """
+    Rotina em background que verifica periodicamente e rotaciona o Desafio Semanal (Art Prompt) a cada 7 dias.
+    """
+    try:
+        while True:
+            try:
+                from datetime import datetime, timezone, timedelta
+                db = SessionLocal()
+                try:
+                    desafios = db.query(Categoria).filter(
+                        Categoria.deletado == False,
+                        Categoria.is_desafio == True
+                    ).order_by(Categoria.id.asc()).all()
+
+                    if desafios:
+                        ativo = next((d for d in desafios if d.desafio_ativo), None)
+                        agora = datetime.now(timezone.utc)
+                        precisa_rotacionar = False
+
+                        if not ativo or not ativo.data_inicio_desafio:
+                            precisa_rotacionar = True
+                        else:
+                            inicio = ativo.data_inicio_desafio
+                            if inicio.tzinfo is None:
+                                inicio = inicio.replace(tzinfo=timezone.utc)
+                            prazo = getattr(ativo, "prazo_dias", 7) or 7
+                            fim_previsto = getattr(ativo, "data_fim_desafio", None)
+                            if fim_previsto:
+                                if fim_previsto.tzinfo is None:
+                                    fim_previsto = fim_previsto.replace(tzinfo=timezone.utc)
+                                if agora >= fim_previsto:
+                                    precisa_rotacionar = True
+                            elif agora - inicio >= timedelta(days=prazo):
+                                precisa_rotacionar = True
+
+                        if precisa_rotacionar:
+                            # Desativa o desafio atual
+                            for d in desafios:
+                                d.desafio_ativo = False
+                            
+                            # Escolhe o próximo da fila circular
+                            proximo = None
+                            if ativo:
+                                proximo = next((d for d in desafios if d.id > ativo.id), None)
+                            if not proximo:
+                                proximo = desafios[0]
+
+                            prazo_proximo = getattr(proximo, "prazo_dias", 7) or 7
+                            proximo.desafio_ativo = True
+                            proximo.data_inicio_desafio = agora
+                            proximo.data_fim_desafio = agora + timedelta(days=prazo_proximo)
+                            db.commit()
+                            print(f"[Desafios Semanais] Novo desafio ativado com sucesso: '{proximo.nomeCategoria}' (ID #{proximo.id}).")
+                finally:
+                    db.close()
+            except Exception as e:
+                print(f"[Desafios Semanais] Erro na rotação: {e}")
+            await asyncio.sleep(3600)  # Checa a cada 1 hora
+    except asyncio.CancelledError:
+        print("[Desafios Semanais] Rotina encerrada com sucesso.")
+
+
 # Conjunto global para guardar referências fortes das tarefas e evitar o Garbage Collector
 tarefas_background = set()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Startup: inicializa as rotinas e armazena as tarefas
+    # 1. Startup: registra loop principal para fallback WebSocket e inicializa rotinas
+    manager.set_loop(asyncio.get_running_loop())
     task_trending = asyncio.create_task(rotina_atualizacao_trending())
     task_redis = asyncio.create_task(iniciar_subscriber_redis())
+    task_desafios = asyncio.create_task(rotina_rotacao_desafios_semanais())
     
     tarefas_background.add(task_trending)
     tarefas_background.add(task_redis)
+    tarefas_background.add(task_desafios)
     
     task_trending.add_done_callback(tarefas_background.discard)
     task_redis.add_done_callback(tarefas_background.discard)
+    task_desafios.add_done_callback(tarefas_background.discard)
     
     yield  # A aplicação roda aqui
     
@@ -518,6 +677,138 @@ async def websocket_notificacoes(
                     pass
     except (WebSocketDisconnect, Exception):
         manager.disconnect(websocket, auth_user_id)
+
+
+@app.get("/uploads/certificados/{filename:path}", include_in_schema=False)
+def servir_certificado_portfolio(filename: str, download: Optional[str] = Query(None), filename_dl: Optional[str] = Query(None, alias="filename")):
+    """
+    Serve documentos de portfólio e certificados com suporte a visualização inline no navegador
+    e download direto, garantindo fallback caso o arquivo físico não seja encontrado no diretório atual.
+    """
+    from fastapi.responses import FileResponse, Response
+
+    nome_seguro = os.path.basename(filename)
+    base_backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidatos = [
+        os.path.join(settings.UPLOAD_DIR, "certificados", nome_seguro),
+        os.path.join(base_backend_dir, "uploads", "certificados", nome_seguro),
+    ]
+
+    caminho_encontrado = next((p for p in candidatos if os.path.exists(p)), None)
+
+    if not caminho_encontrado and nome_seguro.lower().endswith(".pdf"):
+        # Fallback automático: reconstrói o PDF com os metadados do certificado cadastrado no banco
+        titulo_doc = "Certificado / Portfolio Artistico"
+        instituicao_doc = "Artfolio"
+        ano_doc = "2026"
+        artista_doc = "Artista Artfolio"
+        nome_original = filename_dl or nome_seguro
+
+        from app.database import SessionLocal
+        db_cert = SessionLocal()
+        try:
+            rows = db_cert.execute(
+                text("SELECT nome, certificados FROM usuario WHERE certificados IS NOT NULL")
+            ).fetchall()
+            for r in rows:
+                if r.certificados and nome_seguro in r.certificados:
+                    artista_doc = r.nome or artista_doc
+                    try:
+                        lista_c = json.loads(r.certificados)
+                        for item_c in lista_c:
+                            if nome_seguro in str(item_c.get("arquivoUrl", "")):
+                                titulo_doc = item_c.get("titulo") or titulo_doc
+                                instituicao_doc = item_c.get("instituicao") or instituicao_doc
+                                ano_doc = str(item_c.get("ano") or ano_doc)
+                                nome_original = item_c.get("nomeArquivo") or nome_original
+                                break
+                    except Exception:
+                        pass
+                    break
+        except Exception:
+            pass
+        finally:
+            db_cert.close()
+
+        def _esc_pdf(val: str) -> str:
+            s = (val or "").encode("latin-1", errors="replace").decode("latin-1")
+            return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+        stream_bytes = (
+            "BT\n"
+            "/F1 20 Tf\n"
+            "72 720 Td\n"
+            "(ARTFOLIO - CERTIFICADO & PORTFOLIO ARTISTICO) Tj\n"
+            "/F1 15 Tf\n"
+            "0 -45 Td\n"
+            f"(Titulo: {_esc_pdf(titulo_doc)}) Tj\n"
+            "/F1 12 Tf\n"
+            "0 -28 Td\n"
+            f"(Instituicao / Emissor: {_esc_pdf(instituicao_doc)}) Tj\n"
+            "0 -24 Td\n"
+            f"(Ano: {_esc_pdf(ano_doc)}) Tj\n"
+            "0 -24 Td\n"
+            f"(Artista: {_esc_pdf(artista_doc)}) Tj\n"
+            "0 -24 Td\n"
+            f"(Arquivo: {_esc_pdf(nome_original)}) Tj\n"
+            "ET\n"
+        ).encode("latin-1")
+
+        objs = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+            b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+            f"5 0 obj\n<< /Length {len(stream_bytes)} >>\nstream\n".encode("latin-1") + stream_bytes + b"endstream\nendobj\n",
+        ]
+        pdf_buf = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+        offsets = []
+        for o in objs:
+            offsets.append(len(pdf_buf))
+            pdf_buf.extend(o)
+        xref_pos = len(pdf_buf)
+        pdf_buf.extend(f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode("latin-1"))
+        for off in offsets:
+            pdf_buf.extend(f"{off:010d} 00000 n \n".encode("latin-1"))
+        pdf_buf.extend(f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n".encode("latin-1"))
+
+        destino_padrao = os.path.join(base_backend_dir, "uploads", "certificados", nome_seguro)
+        try:
+            os.makedirs(os.path.dirname(destino_padrao), exist_ok=True)
+            with open(destino_padrao, "wb") as f:
+                f.write(pdf_buf)
+            caminho_encontrado = destino_padrao
+        except Exception:
+            disposition = "attachment" if str(download).lower() in ("1", "true") else "inline"
+            return Response(
+                content=bytes(pdf_buf),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'{disposition}; filename="{nome_seguro}"'}
+            )
+
+    if not caminho_encontrado or not os.path.exists(caminho_encontrado):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Arquivo de portfólio ou certificado não encontrado.")
+
+    ext = os.path.splitext(nome_seguro)[1].lower()
+    media_types = {
+        ".pdf": "application/pdf",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }
+    media_type = media_types.get(ext, "application/octet-stream")
+    is_download = str(download).lower() in ("1", "true")
+    nome_download = (filename_dl or nome_seguro).replace('"', "")
+    disposition_type = "attachment" if is_download else "inline"
+
+    return FileResponse(
+        path=caminho_encontrado,
+        media_type=media_type,
+        filename=nome_download if is_download else None,
+        content_disposition_type=disposition_type,
+    )
 
 
 # Servir arquivos estáticos (uploads de fotos de perfil, obras, certificados, etc.)

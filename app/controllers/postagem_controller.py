@@ -47,15 +47,83 @@ def listar_obras(
         usuario_atual_id=user_id
     )
 
-@router.get("/categorias", status_code=status.HTTP_200_OK, summary="Listar todas as categorias oficiais")
-@router.get("/categorias/", status_code=status.HTTP_200_OK, include_in_schema=False)
-def listar_categorias(db: Session = Depends(get_db)):
+@router.get("/categorias/desafio-atual", status_code=status.HTTP_200_OK, summary="Obter Desafio Semanal Ativo")
+def obter_desafio_atual(db: Session = Depends(get_db)):
     """
-    Retorna a lista completa de categorias oficiais cadastradas no PostgreSQL.
+    Retorna a categoria correspondente ao Desafio da Semana ativo atualmente (Art Prompt).
     """
     from app.models.categoria_model import Categoria
-    categorias = db.query(Categoria).filter(Categoria.deletado == False).order_by(Categoria.nomeCategoria.asc()).all()
-    return [{"id": c.id, "nomeCategoria": c.nomeCategoria} for c in categorias]
+    desafio = db.query(Categoria).filter(
+        Categoria.deletado == False,
+        Categoria.is_desafio == True,
+        Categoria.desafio_ativo == True
+    ).first()
+    
+    if not desafio:
+        # Se nenhum estiver ativo, tenta ativar o primeiro desafio disponível
+        desafio = db.query(Categoria).filter(
+            Categoria.deletado == False,
+            Categoria.is_desafio == True
+        ).order_by(Categoria.id.asc()).first()
+        if desafio:
+            from datetime import datetime, timezone
+            desafio.desafio_ativo = True
+            desafio.data_inicio_desafio = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(desafio)
+
+    if not desafio:
+        return None
+
+    from datetime import datetime, timezone, timedelta
+    prazo_dias = getattr(desafio, "prazo_dias", 7) or 7
+    inicio = desafio.data_inicio_desafio
+    fim = getattr(desafio, "data_fim_desafio", None)
+    if inicio and not fim:
+        fim = inicio + timedelta(days=prazo_dias)
+
+    return {
+        "id": desafio.id,
+        "nomeCategoria": desafio.nomeCategoria,
+        "is_desafio": True,
+        "desafio_ativo": True,
+        "prazo_dias": prazo_dias,
+        "data_inicio_desafio": inicio.isoformat() if inicio else None,
+        "data_fim_desafio": fim.isoformat() if fim else None,
+    }
+
+@router.get("/categorias", status_code=status.HTTP_200_OK, summary="Listar todas as categorias oficiais")
+@router.get("/categorias/", status_code=status.HTTP_200_OK, include_in_schema=False)
+def listar_categorias(
+    incluir_inativos: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna a lista de categorias oficiais cadastradas no PostgreSQL.
+    Por padrão, oculta desafios semanais inativos/antigos da criação de novas obras.
+    """
+    from app.models.categoria_model import Categoria
+    from sqlalchemy import or_
+
+    query = db.query(Categoria).filter(Categoria.deletado == False)
+    if not incluir_inativos:
+        query = query.filter(
+            or_(
+                Categoria.is_desafio == False,
+                Categoria.desafio_ativo == True
+            )
+        )
+    categorias = query.order_by(Categoria.nomeCategoria.asc()).all()
+    return [
+        {
+            "id": c.id,
+            "nomeCategoria": c.nomeCategoria,
+            "is_desafio": getattr(c, "is_desafio", False),
+            "desafio_ativo": getattr(c, "desafio_ativo", False),
+            "data_inicio_desafio": c.data_inicio_desafio.isoformat() if getattr(c, "data_inicio_desafio", None) else None
+        }
+        for c in categorias
+    ]
 
 @router.get("/postagens/salvas", response_model=List[PostagemResposta], status_code=status.HTTP_200_OK, summary="Listar minhas obras salvas")
 @router.get("/postagens/salvas/", response_model=List[PostagemResposta], status_code=status.HTTP_200_OK, include_in_schema=False)

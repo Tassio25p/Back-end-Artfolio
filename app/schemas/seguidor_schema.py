@@ -36,6 +36,10 @@ class UsuarioRelacionamentoItem(BaseModel):
     fotoPerfil: Optional[str] = None
     tipo_conta: str = "cliente"
     biografia: Optional[str] = None
+    plano: str = "Free"
+    mostrar_moldura_led: bool = True
+    mostrar_badge_plano: bool = True
+    cor_led_hex: Optional[str] = "#E17055"
     seguindo: bool = False
     segueDeVolta: bool = False
     isMe: bool = False

@@ -10,6 +10,10 @@ class ComentarioUsuarioResposta(BaseModel):
     id: int
     nome: str
     fotoPerfil: Optional[str] = Field(None, alias="fotoPerfil")
+    plano: str = "Free"
+    mostrar_moldura_led: bool = True
+    mostrar_badge_plano: bool = True
+    cor_led_hex: Optional[str] = "#E17055"
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
